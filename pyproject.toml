@@ -11,6 +11,8 @@ dependencies = [
     "torch>=2.14.1",
     "numpy",
     "matplotlib",
+    "jupyter>=1.1.1",
+    "ipykernel>=7.4.0",
 ]
 
 # Windows + Blackwell (RTX 5070 Ti, sm_120) needs PyTorch's own CUDA index:
