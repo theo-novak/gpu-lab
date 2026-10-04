@@ -1,0 +1,32 @@
+[project]
+name = "gpu-lab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Theodosios Dimitrasopoulos", email = "theodosios.novak@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.14.1",
+    "numpy",
+    "matplotlib",
+]
+
+# Windows + Blackwell (RTX 5070 Ti, sm_120) needs PyTorch's own CUDA index:
+# the default PyPI wheel for Windows is CPU-only (learned the hard way).
+# CUDA 13.0 = stable tier with Blackwell support per PyTorch's 2.12 matrix.
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[project.scripts]
+gpu-lab = "gpu_lab:main"
+
+[build-system]
+requires = ["uv_build>=0.12.18,<0.13.0"]
+build-backend = "uv_build"
