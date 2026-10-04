@@ -99,6 +99,83 @@ def gradient_penalty(critic, real, fake, gp_rng):
     return ((norms - 1.0) ** 2).mean()
 
 
+# ---------------------------------------------------- comparison metrics --
+# Module-level so the notebook can run the SAME estimators on real market
+# return panels — apples-to-apples with the generator's report card.
+
+def acf(x, k):
+    """ACF at lag k of a (n_paths, T) tensor, per column pair."""
+    if k == 0:
+        return torch.ones(x.shape[1] - k, device=x.device)
+    a = x[:, :-k] - x[:, :-k].mean(0, keepdim=True)
+    b = x[:, k:] - x[:, k:].mean(0, keepdim=True)
+    return (a * b).mean(0) / (
+        a.pow(2).mean(0).sqrt() * b.pow(2).mean(0).sqrt() + 1e-12
+    )
+
+
+def acf_curve(x, lags=range(1, 16)):
+    """Mean ACF(|r|) per lag over columns; pads each lag's shrinking vector
+    (T-k columns) with the lag's own mean so all lags stack to one length."""
+    curves = []
+    for k in lags:
+        v = acf(x.abs(), k)
+        m = v.mean()
+        pad = torch.full((x.shape[1] - 1 - v.shape[0],), m, device=x.device)
+        curves.append(torch.cat([v, pad]))
+    return torch.stack(curves).mean(1)
+
+
+def corr_next_abs(r):
+    """Leverage proxy: Corr(r_i, |r_{i+1}|) averaged over columns."""
+    a = r[:, :-1] - r[:, :-1].mean(0, keepdim=True)
+    b = r[:, 1:].abs() - r[:, 1:].abs().mean(0, keepdim=True)
+    corr = (a * b).sum(0) / (
+        a.pow(2).sum(0).sqrt() * b.pow(2).sum(0).sqrt() + 1e-12
+    )
+    return corr.mean().item()
+
+
+def lsq_slope(xs, ys):
+    """Least-squares slope — plain Python, no numpy dependency."""
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum(
+        (x - mx) ** 2 for x in xs
+    )
+
+
+def panel_metrics(panel):
+    """Summary stats for a (n_paths, T) return panel — the same estimators
+    the report card uses, so real-data panels score directly against the GAN."""
+    p = panel.float()
+    vol = p.std(0).mean().item() * math.sqrt(252)
+    m, s = p.mean(0, keepdim=True), p.std(0, keepdim=True)
+    kurt = (((p - m) / s) ** 4).mean(0).mean().item()
+    curve = acf_curve(p.abs())
+    xs = [math.log(k) for k in range(1, len(curve) + 1)]
+    slope = lsq_slope(xs, [math.log(max(v, 1e-6)) for v in curve.tolist()])
+    return dict(
+        vol_ann=vol,
+        kurtosis=kurt,
+        roughness_slope=slope,
+        leverage=corr_next_abs(p),
+        acf1=curve[0].item(),
+        acf5=curve[4].item(),
+    )
+
+
+def series_scalars(r):
+    """Clean 1D-series scalars (vol, kurtosis) — for real single paths, where
+    per-step panel estimates would double-count overlapping windows."""
+    x = r.double()
+    m, s = x.mean(), x.std()
+    return dict(
+        vol_ann=s.item() * math.sqrt(252),
+        kurtosis=(((x - m) / s) ** 4).mean().item(),
+    )
+
+
 # ------------------------------------------------------------------- data --
 def load_data(path=DATA):
     """Load the validated dataset. Returns (returns, meta); returns on GPU."""
@@ -291,40 +368,6 @@ class Trainer:
         real = self.data if real is None else real
         n = min(len(gen), len(real))
         gen, real_ = gen[:n], real[:n]
-
-        def acf(x, k):
-            if k == 0:
-                return torch.ones(x.shape[1] - k, device=x.device)
-            a = x[:, :-k] - x[:, :-k].mean(0, keepdim=True)
-            b = x[:, k:] - x[:, k:].mean(0, keepdim=True)
-            return (a * b).mean(0) / (
-                a.pow(2).mean(0).sqrt() * b.pow(2).mean(0).sqrt() + 1e-12
-            )
-
-        def acf_curve(x):
-            lags = range(1, 16)
-            curves = []
-            for k in lags:
-                v = acf(x.abs(), k)
-                m = v.mean()
-                pad = torch.full((x.shape[1] - 1 - v.shape[0],), m, device=x.device)
-                curves.append(torch.cat([v, pad]))
-            return torch.stack(curves).mean(1)
-
-        def corr_next_abs(r):
-            a = r[:, :-1] - r[:, :-1].mean(0, keepdim=True)
-            b = r[:, 1:].abs() - r[:, 1:].abs().mean(0, keepdim=True)
-            corr = (a * b).sum(0) / (
-                a.pow(2).sum(0).sqrt() * b.pow(2).sum(0).sqrt() + 1e-12
-            )
-            return corr.mean().item()
-
-        def lsq_slope(xs, ys):
-            n = len(xs)
-            mx, my = sum(xs) / n, sum(ys) / n
-            return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum(
-                (x - mx) ** 2 for x in xs
-            )
 
         metrics = {}
         mr, mg = real_.mean(0), gen.mean(0)

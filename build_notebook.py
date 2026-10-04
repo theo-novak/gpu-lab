@@ -130,12 +130,111 @@ print(f"headroom at CONFIG={CONFIG}: {total/2**20 - peak:,.0f} MiB — "
 ))
 
 cells.append(md(
+"""## The reality check: simulated paths vs real stocks
+
+The GAN's report card above grades it against its teacher. But the teacher is a model too — the real question is how the *student* and the *teacher* both sit against actual market data. Same estimators, three panels: rBergomi (what the GAN studied), the GAN (what it learned), and 2 years of daily returns for SPY, AAPL, and JPM (the yardstick — fetched live from Yahoo's chart API, no key, cached under `data/real/`).
+
+Structure metrics only, deliberately scale-free: vol is a calibration parameter (the GAN inherits its teacher's ξ₀), not structure. ACF, kurtosis, roughness, leverage need no rescaling to compare."""
+))
+
+cells.append(code(
+"""import realdata as rd
+
+# the yardstick: SPY (broad), AAPL (single-name tech), JPM (financials)
+REAL_SYMBOLS = ["SPY", "AAPL", "JPM"]
+WINDOW = 64   # same window length as the GAN's paths
+
+real_panels = {}
+for sym in REAL_SYMBOLS:
+    d = rd.fetch_returns(sym, years=2)          # cached under data/real/
+    panel = rd.make_panel(d["returns"], window=WINDOW)
+    real_panels[sym] = (d, panel)
+    m = wl.panel_metrics(panel)
+    print(f"{sym:>4}: {len(d['returns'])} days ({d['dates'][0]} → {d['dates'][-1]})")
+    print(f"      vol {m['vol_ann']:.1%} | kurtosis {m['kurtosis']:.1f} | "
+          f"roughness {m['roughness_slope']:+.3f} | leverage {m['leverage']:+.3f} | "
+          f"ACF1 {m['acf1']:.3f}")"""
+))
+
+cells.append(code(
+"""# three-way comparison, IDENTICAL estimators on every panel
+gen_panel = tr.generate_paths(20_000, seed=99)
+rb_panel = data[:20_000]
+
+def row(name, panel):
+    m = wl.panel_metrics(panel)
+    return [name, m["kurtosis"], m["roughness_slope"], m["leverage"], m["acf1"], m["acf5"]]
+
+rows = [row("rBergomi (teacher)", rb_panel), row("GAN (student)", gen_panel)]
+rows += [row(sym, p) for sym, (_, p) in real_panels.items()]
+
+hdr = f"{'panel':<20}{'kurtosis':>9}{'roughness':>11}{'leverage':>10}{'ACF1':>8}{'ACF5':>8}"
+print(hdr); print("-" * len(hdr))
+for name, k, rgh, lev, a1, a5 in rows:
+    print(f"{name:<20}{k:>9.1f}{rgh:>+11.3f}{lev:>+10.3f}{a1:>8.3f}{a5:>8.3f}")
+print("\\n(scale-free structure metrics; vol deliberately absent — it is a")
+print(" calibration parameter, and the GAN inherits its teacher's xi0 = 0.235)")"""
+))
+
+cells.append(code(
+"""import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+
+# (0,0) the view Theo asked for: artificial price paths against a real stock
+ax = axes[0, 0]
+spy_d, _ = real_panels["SPY"]
+gen_big = tr.generate_paths(2_000, seed=4242)
+scale = spy_d["returns"].std() / gen_big.std()    # vol-match for a fair visual
+for i in range(3):
+    ax.plot((gen_big[i] * scale).cumsum(0).cpu(), color="crimson", alpha=0.6, lw=1,
+            label="generated" if i == 0 else None)
+ax.plot(spy_d["returns"][-64:].cumsum(0).cpu(), color="black", lw=2, label="SPY (actual)")
+ax.set_title("cumulative log-returns, vol-matched: GAN vs real SPY")
+ax.set_xlabel("day"); ax.legend()
+
+# (0,1) volatility clustering, three-way
+ax = axes[0, 1]
+lags = list(range(1, 16))
+ax.plot(lags, wl.acf_curve(rb_panel.abs()).cpu(), "o-", color="gray", label="rBergomi (teacher)")
+ax.plot(lags, wl.acf_curve(gen_panel.abs()).cpu(), "s--", color="crimson", label="GAN (student)")
+ax.plot(lags, wl.acf_curve(real_panels["SPY"][1].abs()).cpu(), "^-", color="steelblue", label="SPY")
+ax.set_title("ACF of |returns| (volatility clustering)")
+ax.set_xlabel("lag (days)"); ax.legend()
+
+# (1,0) + (1,1) roughness and leverage across all five panels
+names = [r[0] for r in rows]
+colors = ["gray", "crimson", "steelblue", "steelblue", "steelblue"]
+ax = axes[1, 0]
+ax.bar(names, [r[2] for r in rows], color=colors)
+ax.axhline(0, color="black", lw=0.5); ax.set_title("roughness slope (more negative = rougher)")
+ax.tick_params(axis="x", rotation=20)
+ax = axes[1, 1]
+ax.bar(names, [r[3] for r in rows], color=colors)
+ax.axhline(0, color="black", lw=0.5); ax.set_title("leverage Corr(r_i, |r_{i+1}|)")
+ax.tick_params(axis="x", rotation=20)
+
+fig.tight_layout()
+plt.show()"""
+))
+
+cells.append(md(
+"""### Reading the reality check honestly
+
+Two different gaps live in that table, and they need different fixes:
+
+- **Student gap** (GAN vs rBergomi): where the GAN column differs from its teacher, the fix is more training or a sharper critic — a *learnable* gap.
+- **Teacher gap** (rBergomi vs real stocks): where the model itself differs from SPY/AAPL/JPM — clustering persistence, leverage strength, tail weight — no amount of GAN training fixes it. The student can only be as honest as its teacher. That's the argument for the endgame: point the same architecture at *real* return panels, and the yardstick becomes the classroom."""
+))
+
+cells.append(md(
 """## Where this honestly stands
 
 - **What "proven" gets you:** the prototype's verdict at 12k iters — roughness and leverage in PASS, marginal moments close, per-step mean profile at WARN. A *proof the pipeline works*, not a production scenario engine.
 - **The realistic 12 GB ceiling:** `"max"` (G 4096 / D 8192) fits at 3.8 GB — capacity is not the binding constraint on this card. **Wall-clock is.** WGANs at MLP scale converge by iteration count, not FLOPs, so the honest frontier is how many ms/iter you'll tolerate: ~34 ms buys the proven size, ~600 ms buys max.
 - **Length is free:** n_steps 64 → 2048 costs ~40 MiB. The expensive part of longer horizons is regenerating training data, not VRAM — an easy follow-up experiment.
 - **Known next lever (not VRAM):** a 1D-convolutional critic over the path axis — structure-aware, and where the residual WARN metrics likely live.
+- **The reality check** (section above): the student gap and the teacher gap are now separated in one table — the teacher's own distance from real stocks is a ceiling no amount of GAN training crosses.
 - **The endgame this is all scaffolding for:** the same trainer, pointed at *real* return paths instead of rBergomi output. The exact engine is the practice run because it has ground truth; the market doesn't.
 
 *The decisive test remains the one above: if the call price from generated paths doesn't match the engine, nothing else on this page matters.*"""
