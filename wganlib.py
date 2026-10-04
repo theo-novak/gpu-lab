@@ -211,15 +211,26 @@ class Trainer:
         betas=BETAS,
         batch: int = BATCH,
         seed: int = SEED,
+        center: bool = True,
+        dt: float | None = None,
     ):
         self.data = data
         self.dev = data.device
         self.n_paths, self.n_steps = data.shape
         self.scale = data.std().item()
+        # Gate 1 (Oct 2026): drift centering. At flat xi0 the per-step mean is
+        # a KNOWN deterministic constant, -0.5*xi0*dt — so subtract it from the
+        # training data (the GAN spends capacity on structure, not on placing
+        # a constant it is entitled to know) and add it back analytically at
+        # generation. Cumulatively the drift is -0.030 vs terminal std 0.244:
+        # 12% of a std the GAN no longer has to learn.
+        self.center = center
+        self.mu = data.mean(0) if center else torch.zeros(self.n_steps, device=data.device)
+        self.dt = float(dt) if dt is not None else float(torch.load(DATA)["dt"])
         self.config = dict(
             hidden_g=hidden_g, hidden_d=hidden_d, depth=depth,
             noise_dim=noise_dim, n_critic=n_critic, gp_lambda=gp_lambda,
-            lr=lr, betas=betas, batch=batch, seed=seed,
+            lr=lr, betas=betas, batch=batch, seed=seed, center=center,
         )
         self.g_rng = torch.Generator(device=self.dev.type); self.g_rng.manual_seed(seed)
         self.gp_rng = torch.Generator(device=self.dev.type); self.gp_rng.manual_seed(seed + 1)
@@ -230,6 +241,7 @@ class Trainer:
         self.opt_d = torch.optim.Adam(self.D.parameters(), lr=lr, betas=betas)
         self.iter = 0
         self.history = []   # rows: (iter, d_real, gap=d_fake-d_real, gp, g_loss)
+        self._gmean = None  # generator per-step mean (scaled units) — lazy cache
 
         MODEL_DIR.mkdir(exist_ok=True)
         self.ckpt_path = MODEL_DIR / "wgan_notebook.pt"
@@ -239,11 +251,13 @@ class Trainer:
         """Run n_iters more generator iterations. Chunkable; state persists."""
         batch, n_critic = self.config["batch"], self.config["n_critic"]
         lam = self.config["gp_lambda"]
-        data = self.data / self.scale
+        data = (self.data - self.mu) / self.scale
         n_paths, dev = self.n_paths, self.dev
 
         t0 = time.perf_counter()
         for it in range(self.iter + 1, self.iter + n_iters + 1):
+            if it == self.iter + 1:
+                self._gmean = None   # weights moved: cached gen-mean is stale
             for _ in range(n_critic):
                 idx = torch.randint(0, n_paths, (batch,), generator=self.batch_rng, device=dev)
                 real = data[idx]
@@ -287,6 +301,7 @@ class Trainer:
                 "opt_g": self.opt_g.state_dict(),
                 "opt_d": self.opt_d.state_dict(),
                 "scale": self.scale,
+                "mu": self.mu,
                 "config": self.config,
                 "history": self.history,
             },
@@ -301,7 +316,7 @@ class Trainer:
         cfg = ck.get("config", {})
         if (cfg.get("hidden_g"), cfg.get("hidden_d"), cfg.get("depth")) == (
             self.config["hidden_g"], self.config["hidden_d"], self.config["depth"]
-        ):
+        ) and cfg.get("center", False) == self.center:
             self.iter = ck["iter"]
             self.G.load_state_dict(ck["G"])
             self.D.load_state_dict(ck["D"])
@@ -313,9 +328,67 @@ class Trainer:
             print("checkpoint has a different architecture — starting fresh")
         return self
 
+    @classmethod
+    def from_checkpoint(cls, path=None, data=None):
+        """Rebuild a Trainer exactly as the checkpoint was trained — so the
+        CLI (and future sessions) can't silently mismatch architectures or
+        the centering convention."""
+        path = Path(path) if path is not None else MODEL_DIR / "wgan_notebook.pt"
+        ck = torch.load(path, weights_only=False)
+        cfg = ck["config"]
+        if data is None:
+            data, _ = load_data()
+        tr = cls(
+            data, hidden_g=cfg["hidden_g"], hidden_d=cfg["hidden_d"],
+            depth=cfg["depth"], noise_dim=cfg["noise_dim"],
+            center=cfg.get("center", False),
+        )
+        tr.iter = ck["iter"]
+        tr.G.load_state_dict(ck["G"])
+        tr.D.load_state_dict(ck["D"])
+        tr.opt_g.load_state_dict(ck["opt_g"])
+        tr.opt_d.load_state_dict(ck["opt_d"])
+        tr.history = list(ck.get("history", []))
+        return tr
+
     # -------------------------------------------------------- evaluation --
-    def generate_paths(self, n: int, seed: int | None = None) -> torch.Tensor:
-        """n log-return paths (n, n_steps), unscaled to return units."""
+    def _generator_mean(self) -> torch.Tensor:
+        """G's own per-step mean output (scaled units), estimated once from
+        a large FIXED-seed sample and cached.
+
+        Why this exists (tail_diag.py, Oct 2026): the WGAN critic polices the
+        path DISTRIBUTION, and it lets G park a systematic per-step mean
+        offset (measured: up to ~70·se on individual steps, E[log S_T] off by
+        0.19σ — which was the ENTIRE call-price miss at z=-93; tail shape
+        matched to 0.0007). But the centered training target has per-step
+        mean EXACTLY 0 — a known constant. Enforcing it analytically is the
+        same principle as drift centering: known constants are not the GAN's
+        job. Generation-time fresh-z sample noise is ~1e-4/step (100k paths),
+        an order below the MC error of anything priced from these paths.
+        """
+        if self._gmean is None:
+            self.G.eval()
+            with torch.no_grad():
+                rng = torch.Generator(device=self.dev.type)
+                rng.manual_seed(self.config["seed"] + 13)
+                sample = []
+                for start in range(0, 100_000, 2**14):
+                    m = min(2**14, 100_000 - start)
+                    z = torch.randn(m, self.config["noise_dim"], generator=rng, device=self.dev)
+                    sample.append(self.G(z))
+                self._gmean = torch.cat(sample).mean(0)
+            self.G.train()
+        return self._gmean
+
+    def generate_paths(self, n: int, seed: int | None = None, retarget_vol: float | None = None) -> torch.Tensor:
+        """n log-return paths (n, n_steps) in return units.
+
+        retarget_vol (gate 2): if given, rescale the CENTERED paths to this
+        annualized vol. Correlation-based structure (ACF, roughness slope,
+        leverage) is scale-invariant, so the learned signature survives; the
+        drift is rebuilt analytically for the target vol, -0.5*sigma^2*dt
+        per step, instead of the teacher's.
+        """
         self.G.eval()
         rng = torch.Generator(device=self.dev.type)
         rng.manual_seed(seed if seed is not None else self.config["seed"] + 7)
@@ -325,9 +398,14 @@ class Trainer:
                 m = min(2**14, n - start)
                 z = torch.randn(m, self.config["noise_dim"], generator=rng, device=self.dev)
                 paths.append(self.G(z))
-        out = torch.cat(paths) * self.scale
+        centered = (torch.cat(paths) - self._generator_mean()) * self.scale
         self.G.train()
-        return out
+        if retarget_vol is None:
+            return centered + self.mu          # original units: centered + drift
+        daily = retarget_vol / math.sqrt(252.0)
+        s = centered.std().item()
+        drift = -0.5 * retarget_vol * retarget_vol * self.dt
+        return centered * (daily / s) + drift
 
     def plot_loss_curves(self, save_path=None):
         """Plot D(real), Wasserstein gap, GP term, G loss from history."""

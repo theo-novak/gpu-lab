@@ -1,0 +1,12 @@
+{
+ "hidden_g": 256,
+ "hidden_d": 512,
+ "center": true,
+ "iter": 16000,
+ "gan_price": 0.08640702813863754,
+ "engine_price": 0.08117048442363739,
+ "z": 16.462635500778546,
+ "status": "FAIL",
+ "measured": "2026-10-05",
+ "note": "drift-centered + generator-mean-enforced run. Structure matches teacher (roughness d<0.02, leverage d<0.015); Var[logST] rel err 0.6%; residual miss is terminal-shape near the money. Levers left: full big-config run (killed at 5k by session close), then conv critic."
+}

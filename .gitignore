@@ -15,3 +15,11 @@ main.py
 # Regenerable outputs (README documents the exact commands + seeds)
 data/      # 100k x 64 return paths — `uv run python build_dataset.py`, seeds 2026/2027
 report/    # evaluator plots — `uv run python evaluate_wgan.py [model]`
+
+# Training logs (the lessons live in docstrings and the verdict file, not logs)
+*.log
+
+# Superseded/archived checkpoints — the ACTIVE wgan_notebook.pt stays tracked
+models/wgan_notebook_*.pt
+models/wgan_notebook_arch_*.bin
+models/wgan_ckpt_*.pt

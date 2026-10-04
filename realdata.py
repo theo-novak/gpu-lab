@@ -66,6 +66,27 @@ def fetch_returns(symbol: str, years: int = 2, refresh: bool = False) -> dict:
     return out
 
 
+def fetch_spot(symbol: str) -> dict:
+    """Live regular-market price via the chart API's meta block (no key).
+
+    Not cached — spot is a quote, not history. Same endpoint the notebook
+    already uses; one tiny request.
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": _UA, "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        meta = json.loads(resp.read().decode("utf-8"))["chart"]["result"][0]["meta"]
+    return dict(
+        symbol=symbol,
+        spot=float(meta["regularMarketPrice"]),
+        prev_close=float(meta["chartPreviousClose"]),
+        currency=meta.get("currency", "?"),
+        ts=meta.get("regularMarketTime"),
+    )
+
+
 def make_panel(returns: torch.Tensor, window: int = 64, stride: int = 1) -> torch.Tensor:
     """Slice a 1D return series into (n_windows, window) panels — the SAME
     shape as the GAN's output, so the identical estimators apply.
