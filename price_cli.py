@@ -80,7 +80,13 @@ def price(
     verdict_path = HERE / "models" / "gan_verdict.json"
     if CKPT.exists():
         try:
-            tr = wl.Trainer.from_checkpoint(CKPT)
+            # from_checkpoint now REQUIRES data + fingerprint match (the
+            # data-poisoning rule Oct 2026). The shipped exhibit is the
+            # synthetic-lineage model: load the synthetic panel and verify.
+            # A real-panel checkpoint in the active slot is NOT the shipped
+            # exhibit — degrade honestly instead of crashing.
+            data_syn, _ = wl.load_data()
+            tr = wl.Trainer.from_checkpoint(CKPT, data=data_syn)
             gen = tr.generate_paths(paths, seed=777, retarget_vol=sigma)[:, :days]
             # normalized units like engine/BS: S0=1, strike k_norm; display ×spot
             logST = gen.sum(1)
@@ -109,6 +115,12 @@ def price(
                     )
                 else:
                     gan_status = "verdict file describes a different checkpoint — re-measure"
+        except ValueError as e:
+            gan_status = (
+                "GAN slot disabled: checkpoint does not match the synthetic-"
+                "exhibit fingerprint (real-panel model in the active slot? — "
+                "see models/ and docs)"
+            )
         except Exception as e:  # noqa: BLE001 — the CLI degrades honestly, not silently
             gan_status = f"unavailable: {type(e).__name__}: {e}"
 

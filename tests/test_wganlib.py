@@ -241,6 +241,42 @@ class TestConvCritic:
         assert not isinstance(other.D, wl.ConvCritic)
 
 
+class TestDataFingerprint:
+    """The data-poisoning rule (Oct 2026): from_checkpoint must never
+    silently substitute data — a real-panel checkpoint resumed on synthetic
+    data would train its last iterations on the wrong distribution."""
+
+    def test_from_checkpoint_requires_data(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=42)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "ck.pt"
+        tr.save()
+        with pytest.raises(ValueError, match="REQUIRES"):
+            wl.Trainer.from_checkpoint(tr.ckpt_path, data=None)
+
+    def test_from_checkpoint_refuses_wrong_data(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=42)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "ck.pt"
+        tr.save()
+        other = small_data * 3.0 + 0.01  # same shape, different distribution
+        with pytest.raises(ValueError, match="mismatch"):
+            wl.Trainer.from_checkpoint(tr.ckpt_path, data=other)
+
+    def test_from_checkpoint_accepts_right_data_restores_scale(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=42)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "ck.pt"
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(tr.ckpt_path, data=small_data)
+        assert tr2.scale == tr.scale and torch.allclose(tr2.mu, tr.mu)
+        assert torch.equal(tr.generate_paths(8, seed=1),
+                           tr2.generate_paths(8, seed=1))
+
+
 class TestGradientPenalty:
     def test_gp_zero_for_linear_critic(self, small_data):
         """A linear critic has constant gradient norm along the path —

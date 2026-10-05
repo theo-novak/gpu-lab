@@ -151,7 +151,9 @@ def main() -> int:
 
     gate_model = None
     if MODEL_PATH.exists():
-        tr = wl.Trainer.from_checkpoint(MODEL_PATH)
+        tr = wl.Trainer.from_checkpoint(
+            MODEL_PATH, data=make_panel(r["returns"].float(), WINDOW, STRIDE)
+        )
         gen = tr.generate_paths(panel.shape[0], seed=2099).float()
         gate_model = estimator_vector(gen)
         copies = verbatim_check(gen, panel)

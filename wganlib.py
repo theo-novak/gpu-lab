@@ -385,12 +385,26 @@ class Trainer:
     def from_checkpoint(cls, path=None, data=None):
         """Rebuild a Trainer exactly as the checkpoint was trained — so the
         CLI (and future sessions) can't silently mismatch architectures or
-        the centering convention."""
+        the centering convention.
+
+        data rule (Oct 2026, caught mid-incident): when None, this loader
+        will NOT silently substitute the synthetic dataset — a real-panel
+        checkpoint resumed that way would train its last iterations on the
+        wrong distribution and recompute scale/mu around it. The data must
+        be supplied and must match the checkpoint's own fingerprint
+        (shape + scale). Fail loudly instead."""
         path = Path(path) if path is not None else MODEL_DIR / "wgan_notebook.pt"
         ck = torch.load(path, weights_only=False)
         cfg = ck["config"]
         if data is None:
-            data, _ = load_data()
+            raise ValueError(
+                "from_checkpoint(path, data=...) now REQUIRES the training "
+                "data: the stored scale/mu fingerprint identifies the data "
+                "the checkpoint was trained on, and silent substitution "
+                "(the old default: synthetic rbergomi_returns.pt) poisoned "
+                "a real-panel resume before its first save. Real-panel "
+                "callers: build the panel with realdata.make_panel first."
+            )
         tr = cls(
             data,
             hidden_g=cfg["hidden_g"], hidden_d=cfg["hidden_d"],
@@ -400,6 +414,26 @@ class Trainer:
             seed=cfg["seed"], center=cfg.get("center", False),
             critic=cfg.get("critic", "mlp"),
         )
+        # fingerprint check: the data passed in must BE the data this
+        # checkpoint was trained on (scale is stored as a float, mu as a
+        # tensor — compare each as what it is)
+        if abs(tr.scale_tensor().item() - float(ck["scale"])) > 1e-4:
+            raise ValueError(
+                f"data mismatch: supplied data's global std "
+                f"{tr.scale_tensor().item():.6f} != checkpoint's stored scale "
+                f"{float(ck['scale']):.6f} — this checkpoint was trained on "
+                f"different data. Refusing to load."
+            )
+        if not torch.allclose(tr.mu.to(tr.dev), ck["mu"].to(tr.dev), atol=1e-5):
+            raise ValueError(
+                "data mismatch: supplied data's per-step mean differs from the "
+                "checkpoint's stored mu — refusing to load."
+            )
+        # restore the SAVED scale/mu verbatim (the trainer recomputed them
+        # from `data` in __init__; the stored ones are the training truth —
+        # identical here BECAUSE the fingerprint check above passed)
+        tr.scale = float(ck["scale"])
+        tr.mu = ck["mu"].to(tr.dev)
         tr.iter = ck["iter"]
         tr.G.load_state_dict(ck["G"])
         tr.D.load_state_dict(ck["D"])
@@ -407,6 +441,10 @@ class Trainer:
         tr.opt_d.load_state_dict(ck["opt_d"])
         tr.history = list(ck.get("history", []))
         return tr
+
+    def scale_tensor(self):
+        """Global std of the training data as a tensor (fingerprint helper)."""
+        return self.data.std()
 
     # -------------------------------------------------------- evaluation --
     def _generator_mean(self) -> torch.Tensor:
