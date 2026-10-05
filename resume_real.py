@@ -10,7 +10,13 @@ import wganlib as wl
 from realdata import fetch_returns, make_panel
 
 r = fetch_returns("SPY", years=2)
-panel = make_panel(r["returns"].float(), 64, 1).contiguous()
+# data-poisoning rule: same panel, same fingerprint — but ON THE GPU.
+# (First 11k iters of this run trained on CPU by accident — the panel was
+# never moved off fetch_returns' CPU tensor, hence 264 ms/iter and a 0%-GPU
+# mystery that took two wrong theories before this one-line diagnosis.
+# Same math either way; the checkpoint is valid.)
+dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+panel = make_panel(r["returns"].float(), 64, 1).contiguous().to(dev)
 tr = wl.Trainer.from_checkpoint("models/wgan_real_spy.pt", data=panel)
 print(f"resumed: iter {tr.iter} | target 16000 | center {tr.config['center']} "
       f"| critic {tr.config['critic']} | fingerprint verified")

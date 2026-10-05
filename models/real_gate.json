@@ -1,0 +1,27 @@
+{
+  "status": "PASS-with-caveats",
+  "measured": "2026-10-05",
+  "model": "models/wgan_real_spy.pt",
+  "config": {"critic": "conv", "center": true, "hidden_g": 256, "hidden_d": 512, "iter": 16000},
+  "data": "SPY 2y daily, 437 overlapping 64-day panels (~7 independent stretches)",
+  "gate": {
+    "pre_registered": "evaluate_real.py, committed befbf78 BEFORE training (single look at 16k)",
+    "R1_structure_inside_sampling_CI": {"verdict": "PASS", "n": 4},
+    "R2_beat_iid_gaussian": {"verdict": "PASS"},
+    "R3_no_memorization_and_dispersion": {
+      "verdict": "FAIL",
+      "verbatim_copies": 0,
+      "panel_var_ratio": 0.45,
+      "floor": 0.5
+    }
+  },
+  "table": {
+    "roughness": {"real": -0.511, "ci": [-4.168, 1.792], "hist_sim": -0.493, "gan": -0.361},
+    "acf1": {"real": 0.246, "ci": [-0.159, 0.314], "hist_sim": 0.216, "gan": 0.203},
+    "acf5": {"real": 0.168, "ci": [-0.159, 0.155], "hist_sim": 0.157, "gan": 0.120},
+    "leverage": {"real": -0.072, "ci": [-0.340, 0.070], "hist_sim": -0.069, "gan": -0.114}
+  },
+  "descriptive": {"kurtosis": {"real": 22.603, "gan": 9.943}, "logst_var": {"real": 0.004, "gan": 0.002}},
+  "r4_call": {"vol_target": 0.1645, "bs": 0.0189, "gan": 0.0141, "days": 21, "note": "thinner tails price cheaper; no arbiter exists (descriptive only)"},
+  "verdict_text": "Structure learner YES (4/4 inside the data's sampling envelope, decisively above the Gaussian floor, zero memorized blocks). Dispersion FAIL: panel variance ratio 0.45, kurtosis 9.9 vs real 22.6 — the same under-dispersion signature the synthetic gate showed, so it is the objective+critic's, not the teacher's. And the free comparator beats the point: historical block-resampling matches the real estimators as well or better on every row at this sample size — the GAN buys nothing the bootstrap doesn't already give on 2y of data. The BofA regime's promise survives only where data is LONGER than the events you're sampling."
+}

@@ -53,6 +53,43 @@ gate is ever reopened: a payoff-aware auxiliary loss (caveat stated: that
 makes the training objective the test itself), or real-panel training
 where no closed-form engine exists to arbitrate.
 
+## Real-panel endgame (2026-10-05, the BofA regime actually run)
+
+Conv critic, 16k iters, on 437 overlapping 64-day panels of real SPY 2y
+returns — pre-registered gate (`evaluate_real.py`, committed BEFORE
+training: moving-block-bootstrap CIs, Gaussian floor, memorization check):
+
+- **R1 PASS 4/4**: roughness −0.36, ACF1 0.20, ACF5 0.12, leverage −0.11 —
+  every one inside the data's own 90% sampling envelope. But that envelope
+  is WIDE (one 2y series ≈ 7 independent 64-day stretches): pass means
+  "consistent with what this data can certify", nothing stronger.
+- **R2 PASS**: decisively beats iid-Gaussian on every clustering/leverage
+  row (Gaussian sits at 0.000 by construction).
+- **vs historical block-resampling — NO win**: the free, untrained
+  baseline matches the real estimators as well or better on every row
+  (roughness −0.49 vs GAN −0.36, real −0.51). On this data size the GAN
+  buys nothing the bootstrap doesn't already give.
+- **R3 FAIL (the carried signature)**: zero verbatim copies, but panel
+  variance ratio 0.45 < the 0.5 floor — generated dispersion ≈ HALF the
+  real, kurtosis 9.9 vs real 22.6. Same under-dispersion/tail-taming the
+  synthetic gate showed (−9.4% there, −50% here), whether the teacher is a
+  parametric model or reality itself: it's the objective+architecture's
+  signature, not the teacher's.
+- R4 (descriptive): ATM 21d at matched 16.45% vol — GAN 1.41c vs BS 1.89c:
+  thinner tails price cheaper.
+
+Verdict: on minimal real data the path-WGAN is a real structure learner
+that fails dispersion — and at this sample size loses its raison d'être to
+literal resampling. Two runs worth keeping: `models/wgan_real_spy.pt`
+(gate file `models/real_gate.json`).
+
+Two incidents from the arc, encoded as rules: `from_checkpoint` now
+REQUIRES its training data, fingerprint-verified (a naive resume would
+have finished training the real-panel model on synthetic data); and panels
+must be moved to the GPU explicitly — the first 11k iters of this run
+trained on CPU at 264 ms/iter because fetch_returns hands back a CPU
+tensor (fixed: 60 ms/iter on resumé).
+
 ## Reproduce
 
 ```bash
