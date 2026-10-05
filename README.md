@@ -20,24 +20,38 @@ before anything downstream trains on it.
 | `build_dataset.py` | 100k×64 daily log-return paths with fingerprint checks (drift, variance, leverage −0.569, E[log S_T] z=+0.30 vs exact) | done |
 | `train_wgan.py` | WGAN-GP (λ=10, n_critic=5, Adam 1e-4), data scaled to O(1), checkpoints + loss CSV | prototype-trained; 16k run crashed ~12,150 |
 | `evaluate_wgan.py` | honest report card on structure the critic never sees directly: roughness slope, ACF of \|returns\|, leverage proxy, terminal moments. Takes a model path as argv[1] | done |
-| `wganlib.py` | the pipeline as a library: chunked `Trainer` (checkpoints, resume), module-level metrics, `generate_paths(retarget_vol=...)`, `price_call()`. Drift-centered + generator-mean-enforced (known constants are the engine's job, not the GAN's) | done |
+| `wganlib.py` | the pipeline as a library: chunked `Trainer` (checkpoints, resume), module-level metrics, `generate_paths(retarget_vol=...)`, `price_call()`. Drift-centered + generator-mean-enforced (known constants are the engine's job, not the GAN's). `critic="conv"` selects the 60k-param Conv1d critic (architecture, not capacity) | done |
 | `train_wgan_notebook.ipynb` | VS Code notebook: knobs (proven/big/max), chunked training, honest report card, economic test, reality check vs SPY/AAPL/JPM | done, executed copy tracked |
 | `realdata.py` | Yahoo chart API (no key): 2y daily returns + live spot, cached under `data/real/` | done |
 | `price_cli.py` | **the ship**: `uv run python price_cli.py SPY --days 21` → live spot, realized vol, three prices side-by-side (BS baseline / exact engine / WGAN-GP with measured-verdict stamp) | shipped v1 |
-| `train_centered.py` | gate-1 retrains (centered data; `proven` or `big` config), prints the economic verdict | run logs `train_*.log` |
+| `train_centered.py` | gate-1 retrains (centered data; `proven`, `big`, or `conv` critic), prints the economic verdict | three verdicts measured |
 | `tail_diag.py` | the decomposition that pinned the call-price miss on the generator's mean offset, not tails (tail-shape gap 0.0007) | diagnosis preserved |
+| `tests/` | 20-test CPU suite (~2 s, no GPU/data): determinism, centering, mean enforcement, retarget-vol, checkpoint round-trips + arch refusal, ConvCritic invariants; session-isolated from `models/` (a near-miss: tests once overwrote the active slot) | 20/20 |
 
-## Ship status (v1, 2026-10-05)
+## Ship status (v1 FINAL, 2026-10-05)
 
 Live option pricing works end-to-end: keyless spot fetch, realized-vol
 calibration, BS baseline, exact engine, GAN exhibit — each priced from the
-same MC budget with errors stated. The GAN's economic test **FAILs honestly
-at |z|=16.5** (its verdict, measured and stamped in `models/gan_verdict.json`,
-prints next to its price): structure matches the teacher, but the terminal
-law near the money still differs. Per the ship rule: engine-priced truth,
-GAN as a labeled exhibit, no silent asterisks. Levers queued: full big-config
-run (killed at 5k by a session close — rerun `train_centered.py 16000 big`),
-then a 1D-conv critic, then real-panel training.
+same MC budget with errors stated, and the GAN's measured economic-test
+verdict (stamped in `models/gan_verdict.json`) printed next to its price.
+
+Gate 1 is closed, honestly: **three critic architectures at 16k iters
+(drift-centered, generator-mean enforced) all FAIL the economic test** —
+proven MLP |z|=+16.5, 4×-capacity MLP |z|=−24.2, 60k-param Conv1d |z|=−15.8
+— each with a different error profile. The conv critic matches structure
+closest (roughness −0.30 vs −0.37, leverage Δ 0.007, per-step mean inside
+the 4σ bar) yet stays 9.4% low on terminal variance, which the call price
+feels directly. Verdict across all three: the binding constraint is the
+WGAN objective itself — the critic polices path distributions, never the
+terminal law pointwise. Capacity moves the miss around; architecture moves
+it; neither closes it.
+
+On live quotes the conv GAN sits closest to the engine of any run (SPY
+$769.64 ATM 21d: BS 14.58 / engine 12.78 / GAN 12.56, errors ±0.03).
+Engine-priced truth, GAN as a labeled exhibit — no silent asterisks. If the
+gate is ever reopened: a payoff-aware auxiliary loss (caveat stated: that
+makes the training objective the test itself), or real-panel training
+where no closed-form engine exists to arbitrate.
 
 ## Reproduce
 
@@ -57,9 +71,9 @@ Small net (G 2×128, D 2×256, 6k iters): marginals OK, **structure near zero**
 leverage −0.365 vs −0.411 (PASS), Var[log S_T] within 0.9% (PASS) —
 4 PASS / 2 WARN on the 12k-iteration checkpoint (`models/wgan_prototype.pt`).
 
-Where it still loses: per-step mean at a strict 4σ bar and ACF absolute
-levels both sit in WARN; and the 16k run crashed silently at iter ~12,150
-(uncaught — rerun with output logged to file is the next step).
+Where it loses, finally measured: the economic call-price gate FAILs across
+all three critic architectures (see Ship status). Structure is not the
+bottleneck — the terminal law is.
 
 Verdict, candidly: the architecture is validated as a *prototype* — a small
 WGAN-GP can learn rough-vol temporal structure, not just marginals — but it
