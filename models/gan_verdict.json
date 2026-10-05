@@ -8,5 +8,5 @@
  "z": 16.462635500778546,
  "status": "FAIL",
  "measured": "2026-10-05",
- "note": "drift-centered + generator-mean-enforced run. Structure matches teacher (roughness d<0.02, leverage d<0.015); Var[logST] rel err 0.6%; residual miss is terminal-shape near the money. Levers left: full big-config run (killed at 5k by session close), then conv critic."
+ "note": "drift-centered + generator-mean-enforced run. Structure matches teacher; economic test FAIL at |z|=16.5. Big-config 16k run COMPLETE (Oct 5): better mean (z 1.25) and leverage (d 0.005) but roughness overshoot (-0.48 vs -0.37), Var[logST] 13.3 pct low, |z|=24.2 undershoot \u2014 capacity moved the error, did not close it. Next lever: 1D-conv critic over the path axis (models/wgan_notebook_big_16k.pt)."
 }

@@ -235,6 +235,11 @@ class Trainer:
         self.g_rng = torch.Generator(device=self.dev.type); self.g_rng.manual_seed(seed)
         self.gp_rng = torch.Generator(device=self.dev.type); self.gp_rng.manual_seed(seed + 1)
         self.batch_rng = torch.Generator(device=self.dev.type); self.batch_rng.manual_seed(seed + 2)
+        # Seed the GLOBAL torch RNG too: nn.Linear's default init draws from it,
+        # and it advances between constructions — without this, two same-seed
+        # trainers start with DIFFERENT weights (caught by the test suite Oct 2026;
+        # the CLI masked it by building one trainer per process).
+        torch.manual_seed(seed)
         self.G = Generator(noise_dim, hidden_g, self.n_steps, depth).to(self.dev)
         self.D = Critic(hidden_d, self.n_steps, depth).to(self.dev)
         self.opt_g = torch.optim.Adam(self.G.parameters(), lr=lr, betas=betas)
@@ -339,9 +344,12 @@ class Trainer:
         if data is None:
             data, _ = load_data()
         tr = cls(
-            data, hidden_g=cfg["hidden_g"], hidden_d=cfg["hidden_d"],
+            data,
+            hidden_g=cfg["hidden_g"], hidden_d=cfg["hidden_d"],
             depth=cfg["depth"], noise_dim=cfg["noise_dim"],
-            center=cfg.get("center", False),
+            n_critic=cfg["n_critic"], gp_lambda=cfg["gp_lambda"],
+            lr=cfg["lr"], betas=tuple(cfg["betas"]), batch=cfg["batch"],
+            seed=cfg["seed"], center=cfg.get("center", False),
         )
         tr.iter = ck["iter"]
         tr.G.load_state_dict(ck["G"])
