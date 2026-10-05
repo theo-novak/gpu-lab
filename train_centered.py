@@ -4,7 +4,7 @@ Trains the centered proven or big config, then prints the honest report card
 and the economic test. Success criterion (|z| < 2 on the call price) ships
 gate 1; anything else prints honestly.
 
-Run: uv run python train_centered.py [iters] [proven|big]
+Run: uv run python train_centered.py [iters] [proven|big|conv]
 """
 from __future__ import annotations
 
@@ -18,7 +18,11 @@ import wganlib as wl
 
 ITERS = int(sys.argv[1]) if len(sys.argv) > 1 else 16_000
 CONFIG = sys.argv[2] if len(sys.argv) > 2 else "proven"
-SPECS = {"proven": dict(hidden_g=256, hidden_d=512), "big": dict(hidden_g=1024, hidden_d=2048)}
+SPECS = {
+    "proven": dict(hidden_g=256, hidden_d=512),
+    "big": dict(hidden_g=1024, hidden_d=2048),
+    "conv": dict(critic="conv"),   # G stays 3x256; conv critic ~60k params
+}
 
 
 def main() -> int:

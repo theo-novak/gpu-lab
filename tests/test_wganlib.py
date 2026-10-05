@@ -162,6 +162,85 @@ class TestMetrics:
         assert abs(wl.corr_next_abs(noise)) < 0.05
 
 
+class TestConvCritic:
+    """The pre-declared gate-1 lever: conv critic over the path axis."""
+
+    def test_shapes_2d_and_3d(self):
+        d = wl.ConvCritic(n_steps=64)
+        x2 = torch.randn(8, 64)
+        out = d(x2)
+        assert out.shape == (8,), f"(B,T) input must give (B,), got {tuple(out.shape)}"
+        x3 = x2.unsqueeze(1)  # SAME values, shape (B,1,T) — first draft drew
+        # fresh randomness here and compared two different inputs (caught by
+        # the assertion, fixed Oct 2026: test the shape contract, not luck)
+        assert torch.equal(d(x3), out), "(B,1,T) must be equivalent to (B,T)"
+
+    def test_param_count_below_mlp(self):
+        """ARCHITECTURE-NOT-CAPACITY invariant: the conv critic must stay
+        well under the proven MLP critic's params, or the experiment would
+        silently test capacity again (the big run already did that)."""
+        def n_params(m):
+            return sum(p.numel() for p in m.parameters())
+        conv = n_params(wl.ConvCritic(n_steps=64))
+        mlp = n_params(wl.Critic(hidden=512, n_steps=64, depth=3))
+        assert conv < mlp / 5, f"conv {conv} params must be << MLP {mlp}"
+
+    def test_path_order_matters(self):
+        """The flatten head must preserve order sensitivity — a pooled head
+        would be permutation-invariant and blind to roughness. Exact
+        reference: a permutation changes the critic score."""
+        g = torch.Generator().manual_seed(9)
+        d = wl.ConvCritic(n_steps=64)
+        x = torch.randn(4, 64, generator=g).abs()  # nonneg so it's not antisymmetry
+        perm = x[:, torch.randperm(64, generator=g)]
+        assert not torch.allclose(d(x), d(perm)), (
+            "critic must NOT be permutation-invariant"
+        )
+
+    def test_conv_trainer_deterministic(self, small_data):
+        t1 = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=11,
+                        critic="conv")
+        t2 = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=11,
+                        critic="conv")
+        assert isinstance(t1.D, wl.ConvCritic)
+        t1.train(2, log_every=10**9, ckpt_every=10**9)
+        t2.train(2, log_every=10**9, ckpt_every=10**9)
+        for p1, p2 in zip(t1.D.parameters(), t2.D.parameters()):
+            assert torch.equal(p1, p2)
+
+    def test_conv_checkpoint_round_trip(self, small_data, tmp_path):
+        """from_checkpoint must rebuild the CONV critic from config alone —
+        the CLI depends on never silently mismatching architectures."""
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=42,
+                        critic="conv")
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "conv.pt"
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(tr.ckpt_path, data=small_data)
+        assert isinstance(tr2.D, wl.ConvCritic), "config must rebuild ConvCritic"
+        assert tr2.config == tr.config
+        assert torch.equal(
+            tr.generate_paths(32, seed=1), tr2.generate_paths(32, seed=1)
+        )
+
+    def test_resume_refuses_critic_mismatch(self, small_data, tmp_path):
+        """A conv checkpoint offered to an MLP trainer must be refused —
+        same rule as hidden-size mismatch."""
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=42,
+                        critic="conv")
+        tr.ckpt_path = tmp_path / "conv.pt"
+        tr.save()
+        other = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                           noise_dim=4, n_critic=1, batch=32, seed=42)
+        other.resume()
+        assert other.iter == 0, "resume must refuse a critic-arch mismatch"
+        assert not isinstance(other.D, wl.ConvCritic)
+
+
 class TestGradientPenalty:
     def test_gp_zero_for_linear_critic(self, small_data):
         """A linear critic has constant gradient norm along the path —

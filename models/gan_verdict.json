@@ -1,12 +1,13 @@
 {
  "hidden_g": 256,
  "hidden_d": 512,
+ "critic": "conv",
  "center": true,
  "iter": 16000,
- "gan_price": 0.08640702813863754,
+ "gan_price": 0.07641540467739105,
  "engine_price": 0.08117048442363739,
- "z": 16.462635500778546,
+ "z": -15.788862891393217,
  "status": "FAIL",
  "measured": "2026-10-05",
- "note": "drift-centered + generator-mean-enforced run. Structure matches teacher; economic test FAIL at |z|=16.5. Big-config 16k run COMPLETE (Oct 5): better mean (z 1.25) and leverage (d 0.005) but roughness overshoot (-0.48 vs -0.37), Var[logST] 13.3 pct low, |z|=24.2 undershoot \u2014 capacity moved the error, did not close it. Next lever: 1D-conv critic over the path axis (models/wgan_notebook_big_16k.pt)."
+ "note": "Conv critic (60k params, architecture-not-capacity: ~1/10 the MLP). Best structure of all three: roughness -0.298 vs -0.370 (d 0.072, closest yet), leverage d 0.007, per-step mean z 0.82. Price -5.9% low; Var[logST] 9.4% low. Gate 1 FAIL across all three architectures (proven mlp +16.5, big -24.2, conv -15.8) \u2014 evidence the binding constraint is the WGAN objective itself: the critic polices the path distribution, never the terminal law pointwise. Levers left: payoff-aware auxiliary loss or accept-as-exhibit."
 }

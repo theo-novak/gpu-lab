@@ -85,6 +85,47 @@ class Critic(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+class ConvCritic(nn.Module):
+    """1D-conv critic over the path axis — the pre-declared gate-1 lever.
+
+    Motivation (Oct 2026): the MLP critic sees the path as an unordered
+    64-vector. The big-config run (G 1024/D 2048, |z|=24.2) showed capacity
+    alone moves the error around — mean z 18.2->1.25 and leverage 0.019->0.005
+    improved, but roughness overshot (-0.48 vs -0.37) and Var[logST] opened
+    to 13.3%. A conv critic sees LOCAL TEMPORAL structure directly (the
+    adjacent-step patterns that make roughness), at ~1/10 the params
+    (~60k vs the proven MLP's 561k) — so this experiment tests ARCHITECTURE,
+    not capacity.
+
+    Design choices, each load-bearing:
+      - 3x Conv1d(k=5, padding=2), channels 32->64->128, LeakyReLU(0.2)
+      - GroupNorm(1, C) = LayerNorm over the feature map (LayerNorm doesn't
+        fit conv shapes; BatchNorm stays banned — GP/train-eval gotchas)
+      - FLATTEN head (128*T -> 1), NOT global pooling: mean-pooling would
+        make the critic permutation-invariant, blind to path ORDER — the
+        exact structure it exists to police
+      - receptive field 13 steps per unit; every position stays distinct
+        through the flatten, so long-range order is seen too
+    """
+
+    def __init__(self, channels=(32, 64, 128), n_steps=N_STEPS):
+        super().__init__()
+        c1, c2, c3 = channels
+        self.net = nn.Sequential(
+            nn.Conv1d(1, c1, 5, padding=2), nn.GroupNorm(1, c1), nn.LeakyReLU(0.2),
+            nn.Conv1d(c1, c2, 5, padding=2), nn.GroupNorm(1, c2), nn.LeakyReLU(0.2),
+            nn.Conv1d(c2, c3, 5, padding=2), nn.GroupNorm(1, c3), nn.LeakyReLU(0.2),
+            nn.Flatten(),
+            nn.Linear(c3 * n_steps, 1),
+        )
+        self.channels = channels
+
+    def forward(self, x):
+        if x.dim() == 2:          # accept (B, T) like the MLP critic
+            x = x.unsqueeze(1)    # -> (B, 1, T)
+        return self.net(x).squeeze(-1)
+
+
 def gradient_penalty(critic, real, fake, gp_rng):
     """(||grad D(interp)||_2 - 1)^2 on random real/fake mixtures."""
     eps = torch.rand(real.shape[0], 1, generator=gp_rng, device=real.device)
@@ -212,6 +253,7 @@ class Trainer:
         batch: int = BATCH,
         seed: int = SEED,
         center: bool = True,
+        critic: str = "mlp",
         dt: float | None = None,
     ):
         self.data = data
@@ -231,6 +273,7 @@ class Trainer:
             hidden_g=hidden_g, hidden_d=hidden_d, depth=depth,
             noise_dim=noise_dim, n_critic=n_critic, gp_lambda=gp_lambda,
             lr=lr, betas=betas, batch=batch, seed=seed, center=center,
+            critic=critic,
         )
         self.g_rng = torch.Generator(device=self.dev.type); self.g_rng.manual_seed(seed)
         self.gp_rng = torch.Generator(device=self.dev.type); self.gp_rng.manual_seed(seed + 1)
@@ -241,7 +284,12 @@ class Trainer:
         # the CLI masked it by building one trainer per process).
         torch.manual_seed(seed)
         self.G = Generator(noise_dim, hidden_g, self.n_steps, depth).to(self.dev)
-        self.D = Critic(hidden_d, self.n_steps, depth).to(self.dev)
+        # critic architecture is a config knob: "mlp" (proven/big lineages)
+        # or "conv" (the pre-declared structure-aware lever — see ConvCritic)
+        if critic == "conv":
+            self.D = ConvCritic(n_steps=self.n_steps).to(self.dev)
+        else:
+            self.D = Critic(hidden_d, self.n_steps, depth).to(self.dev)
         self.opt_g = torch.optim.Adam(self.G.parameters(), lr=lr, betas=betas)
         self.opt_d = torch.optim.Adam(self.D.parameters(), lr=lr, betas=betas)
         self.iter = 0
@@ -321,7 +369,7 @@ class Trainer:
         cfg = ck.get("config", {})
         if (cfg.get("hidden_g"), cfg.get("hidden_d"), cfg.get("depth")) == (
             self.config["hidden_g"], self.config["hidden_d"], self.config["depth"]
-        ) and cfg.get("center", False) == self.center:
+        ) and cfg.get("center", False) == self.center and cfg.get("critic", "mlp") == self.config["critic"]:
             self.iter = ck["iter"]
             self.G.load_state_dict(ck["G"])
             self.D.load_state_dict(ck["D"])
@@ -350,6 +398,7 @@ class Trainer:
             n_critic=cfg["n_critic"], gp_lambda=cfg["gp_lambda"],
             lr=cfg["lr"], betas=tuple(cfg["betas"]), batch=cfg["batch"],
             seed=cfg["seed"], center=cfg.get("center", False),
+            critic=cfg.get("critic", "mlp"),
         )
         tr.iter = ck["iter"]
         tr.G.load_state_dict(ck["G"])

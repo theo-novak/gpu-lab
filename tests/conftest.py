@@ -18,6 +18,24 @@ N_PATHS = 512
 N_STEPS = 8
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_model_dir(tmp_path_factory):
+    """Redirect wl.MODEL_DIR to a temp dir for the WHOLE test session.
+
+    Near-miss (Oct 2026): Trainer.train() ends with an unconditional
+    self.save(), and ckpt_path defaults to wl.MODEL_DIR/wgan_notebook.pt —
+    the ACTIVE model slot. Tests that trained without reassigning ckpt_path
+    silently overwrote the slot with a tiny test trainer; it surfaced as a
+    0-byte "arch_0MB.bin" label the next time train_centered.py archived
+    the slot. No model was lost (arch_8MB.bin held the real one) — but only
+    by luck. Tests must never write to the real models/ directory.
+    """
+    orig = wl.MODEL_DIR
+    wl.MODEL_DIR = tmp_path_factory.mktemp("models_test")
+    yield
+    wl.MODEL_DIR = orig
+
+
 @pytest.fixture(scope="session")
 def small_data():
     """Seeded synthetic returns with KNOWN per-step mean and std.

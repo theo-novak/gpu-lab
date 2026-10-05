@@ -90,9 +90,14 @@ def price(
             gan_status = "economic test not yet measured for this checkpoint"
             if verdict_path.exists():
                 verdict = json.loads(verdict_path.read_text())
+                # critic MUST be in the match: the conv and proven-MLP
+                # checkpoints share hidden_g/hidden_d/center/iter — without
+                # this field a conv verdict would stamp an MLP price (the
+                # exact silent-asterisk the ship rule exists to prevent).
                 same = (
                     verdict.get("hidden_g") == tr.config["hidden_g"]
                     and verdict.get("hidden_d") == tr.config["hidden_d"]
+                    and verdict.get("critic", "mlp") == tr.config.get("critic", "mlp")
                     and verdict.get("center") == tr.config.get("center")
                     and verdict.get("iter") == tr.iter
                 )
