@@ -183,6 +183,23 @@ def main() -> int:
     print("gate R2: generator must beat iid-Gaussian toward the real value (acf/lev rows)")
     print("gate R3: no verbatim 64-block copies; per-panel var in [0.5x, 2.0x]")
     print("gate R4 (descriptive, no gate): ATM call vs BS at retargeted vol")
+    r4_note = ""
+    if gate_model:
+        import rbergomi as rb
+        sigma = r["returns"].float().std().item() * math.sqrt(252)
+        gen2 = tr.generate_paths(200_000, seed=2100, retarget_vol=sigma)
+        days = 21
+        logST = gen2[:, :days].sum(1)
+        pay = torch.clamp(torch.exp(logST) - 1.0, min=0.0)
+        gan_call = pay.mean().item()
+        gan_call_err = pay.std().item() / math.sqrt(200_000)
+        bs_call = rb.bs_call_price(1.0, 1.0, days / 252.0, sigma)
+        print(f"\nR4 (descriptive — no gate; no arbiter exists): ATM {days}d call "
+              f"at retargeted vol {sigma:.2%}")
+        print(f"  BS closed-form {bs_call * 100:.2f}c | GAN {gan_call * 100:.2f}c "
+              f"±{gan_call_err * 100:.2f}c | gap {(gan_call - bs_call) * 100:+.2f}c")
+        r4_note = "done"
+
     if gate_model:
         copies_note = "OK" if copies == 0 else "FAIL"
         r3 = "PASS" if (copies == 0 and 0.5 <= var_ratio <= 2.0) else "FAIL"
