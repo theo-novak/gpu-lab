@@ -1,13 +1,16 @@
 {
  "loss_curves.png": "Training history from the run-A checkpoint (16k iters, real SPY 10y). The W1 gap not closing is expected: on real data the critic separates real from fake easily \u2014 the gates judge structure, not the critic's score.",
- "tail_ccdf.png": "Empirical CCDF of absolute daily returns (log-log). The GAN's tail curve merges with the Gaussian's past ~2.5% \u2014 the measured mechanism behind run A's R5 failure: beyond-max mass 0.000000, same blindness as historical resampling, for a different reason (objective, not sample).",
+ "tail_ccdf.png": "Empirical CCDF of absolute daily returns (log-log). Run A's tail merges with the Gaussian's past ~2.5% (beyond-max mass 0.000000); run C \u2014 tail-weighted training \u2014 pulls the curve toward the real one, misses the pre-registered high-tail bar by 0.034pp, wins the low tail 3.5x, and puts ~1 day in 12,800 BEYOND the sample max (right of the dashed line), probability resampling cannot emit.",
  "scenario_fan_3d.png": "Left: 80 real 64-day windows from 10y SPY. Right: 80 generated paths (run A checkpoint, seed 2099). Same roughness and clustering; the difference lives at the extremes, not in the body.",
  "density_3d.png": "Joint mass over volatility-regime quintile \u00d7 return-magnitude bin. Regime defined honestly per side (rolling 21-day calendar vol for real data; per-path vol for generated ones \u2014 paths have no calendar). The stressed-regime \u00d7 large-magnitude corner is visibly starved on the GAN surface: the R5 tail-taming measured quantitatively, seen in 3D.",
+ "terminal_hist.png": "Terminal log-return law: synthetic rBergomi teacher vs the active conv-critic GAN (20k draws, seed 2099). The GAN terminal density matches the body but misses the law's tails/variance \u2014 the economic gate's FAIL (|z|=34.1 on the ATM call, 2026-10-10 rebuild; original draw was \u221215.8 \u2014 GPU conv training is bit-nondeterministic, so draws differ while the FAIL conclusion is stable) is exactly this picture: structure learned, law wrong.",
  "_provenance": {
   "model_a": "models/wgan_real_spy_10y.pt (run A: conv, 16k, real SPY 10y 2016-2026)",
+  "model_c": "models/wgan_real_spy_10y_tail.pt (run C: conv, 16k, tail_gamma=1)",
+  "model_synth": "models/wgan_notebook.pt (conv 16k, synthetic rBergomi teacher)",
   "gen_seed": 2099,
   "gen_paths": 50000,
   "gaussian_draws": 3200000,
-  "note": "quantile bars deferred until run-B verdict lands (no invented numbers)"
+  "note": "all figures regenerate from committed checkpoints; manifest ships beside them"
  }
 }

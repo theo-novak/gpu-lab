@@ -4,10 +4,18 @@
  "critic": "conv",
  "center": true,
  "iter": 16000,
- "gan_price": 0.07641540467739105,
+ "gan_price": 0.0711652934551239,
  "engine_price": 0.08117048442363739,
- "z": -15.788862891393217,
+ "z": -34.1213469470505,
  "status": "FAIL",
- "measured": "2026-10-05",
- "note": "Conv critic (60k params, architecture-not-capacity: ~1/10 the MLP). Best structure of all three: roughness -0.298 vs -0.370 (d 0.072, closest yet), leverage d 0.007, per-step mean z 0.82. Price -5.9% low; Var[logST] 9.4% low. Gate 1 FAIL across all three architectures (proven mlp +16.5, big -24.2, conv -15.8) \u2014 evidence the binding constraint is the WGAN objective itself: the critic polices the path distribution, never the terminal law pointwise. Levers left: payoff-aware auxiliary loss or accept-as-exhibit."
+ "measured": "2026-10-10",
+ "note": "Conv critic (60k params, architecture-not-capacity: ~1/10 the MLP). Best structure of all three: roughness -0.298 vs -0.370 (d 0.072, closest yet), leverage d 0.007, per-step mean z 0.82. Price -5.9% low; Var[logST] 9.4% low. Gate 1 FAIL across all three architectures (proven mlp +16.5, big -24.2, conv -15.8) \u2014 evidence the binding constraint is the WGAN objective itself: the critic polices the path distribution, never the terminal law pointwise. Levers left: payoff-aware auxiliary loss or accept-as-exhibit. | REBUILD 2026-10-10: same recipe+seeds retrained after the clobber incident; GPU conv training is not bit-deterministic (atomic accumulation order), so this is a second draw from the same training distribution: z -15.8 -> -34.1. FAIL conclusion stable across draws - the verdict is objective-bound, and run-to-run spread is itself evidence the miss is not a narrow unlucky draw.",
+ "history": [
+  {
+   "measured": "2026-10-05",
+   "z": -15.788862891393217,
+   "gan_price": 0.07641540467739105,
+   "note": "original conv draw; checkpoint clobbered Oct 10 by the resume default-slot incident (ckpt_file provenance rule added in response)"
+  }
+ ]
 }

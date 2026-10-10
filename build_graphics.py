@@ -209,8 +209,10 @@ def fig_terminal_hist() -> None:
           "Terminal log-return law: synthetic rBergomi teacher vs the active "
           "conv-critic GAN (20k draws, seed 2099). The GAN terminal density "
           "matches the body but misses the law's tails/variance — the economic "
-          "gate's FAIL (|z|=15.8 on the ATM call) is exactly this picture: "
-          "structure learned, law wrong.")
+          "gate's FAIL (|z|=34.1 on the ATM call, 2026-10-10 rebuild; original "
+          "draw was −15.8 — GPU conv training is bit-nondeterministic, so "
+          "draws differ while the FAIL conclusion is stable) is exactly this "
+          "picture: structure learned, law wrong.")
 
 def main() -> int:
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")

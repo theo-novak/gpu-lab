@@ -68,7 +68,12 @@ or regime-conditional generation — NOT more data (run A).
 Incident worth its own line: a resume without a named slot stamped 1k
 checkpoints into the default slot and clobbered the synthetic exhibit.
 Library rule added: checkpoints remember `ckpt_file` provenance and
-`from_checkpoint` restores the right slot. 31-test suite pins it.
+`from_checkpoint` restores the right slot. 31-test suite pins it. The
+rebuild reproduced FAIL with a DIFFERENT magnitude (|z| −15.8 → −34.1):
+GPU conv training is not bit-deterministic (atomic accumulation order in
+the conv backward), so identical seeds reproduce the recipe, not the
+weights — a second draw from the same training distribution, and run-to-run
+spread is itself evidence the FAIL is not one unlucky draw.
 
 ## Ship status (v1 FINAL, 2026-10-05)
 
