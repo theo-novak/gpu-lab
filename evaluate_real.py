@@ -70,28 +70,35 @@ def estimator_vector(panel: torch.Tensor) -> dict:
 GATED = ("roughness", "acf1", "acf5", "leverage")
 
 
-def bootstrap_ci(return_series: torch.Tensor, b: int = BLOCK_BOOT_B, seed: int = BOOT_SEED):
-    """Moving-block bootstrap CI on the ORIGINAL 1D return series (block = 64,
-    circular, B=2000, seed 2026): resample contiguous blocks of the series,
-    rebuild the 64-day panel per replica, recompute estimators.
+def bootstrap_ci(return_series: torch.Tensor, b: int = BLOCK_BOOT_B, seed: int = BOOT_SEED,
+                 block: int = WINDOW):
+    """Moving-block bootstrap CI on the ORIGINAL 1D return series (circular,
+    B=2000, seed 2026): resample contiguous blocks of the series, rebuild the
+    64-day panel per replica, recompute estimators.
+
+    block choice matters MORE than the B (v2 lesson, pre-flight Oct 2026):
+    block=64 chops volatility dependence into seams — SPY vol persistence
+    (alpha+beta ~ 0.98) has a dependence horizon of hundreds of days, so
+    64-length replicas mismeasure the ACF rows and the REAL point estimate
+    landed OUTSIDE its own CI (acf1 0.360 vs [−0.174, 0.334]). block=252
+    (one year) is the persistence-honest default for 10y SPY. Wide CIs are
+    the honest cost of ~10 independent regimes in a decade of data.
 
     (v1 of this harness bootstrapped panel ROWS of the overlapping-window
     panel instead — invalid: duplicating already-overlapping windows distorts
-    the cross-window averaging, and the real point estimates landed OUTSIDE
-    their own 90% CIs — roughness -0.511 vs [-0.507, -0.440]. Caught by the
-    pre-registration run itself, 2026-10-05, before any GAN was judged.)
+    the cross-window averaging. Caught by the pre-registration run itself.)
     """
     g = torch.Generator().manual_seed(seed)
     T = len(return_series)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     series = return_series.to(dev)
-    n_blocks = math.ceil(T / WINDOW)
+    n_blocks = math.ceil(T / block)
     stats = {k: [] for k in GATED}
     for start in range(0, b, 100):
         bt = min(100, b - start)
         for _ in range(bt):
             starts = torch.randint(0, T, (n_blocks,), generator=g).tolist()
-            blocks = [(series[(s + i) % T] for i in range(WINDOW)) for s in starts]
+            blocks = [(series[(s + i) % T] for i in range(block)) for s in starts]
             flat = torch.tensor([v for blk in blocks for v in blk][:T],
                                 device=dev)
             v = estimator_vector(make_panel(flat, WINDOW, STRIDE))
