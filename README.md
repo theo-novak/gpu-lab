@@ -75,6 +75,34 @@ the conv backward), so identical seeds reproduce the recipe, not the
 weights — a second draw from the same training distribution, and run-to-run
 spread is itself evidence the FAIL is not one unlucky draw.
 
+## v3: seeds, noise floor, and the crash-tail win (2026-10-10, contract e1bdf77)
+
+v2 left 0.034pp of high-tail miss on the table — and the rebuild incident
+had already taught us single draws aren't claims. So v3's contract was
+amended BEFORE any v3 training: **lever verdicts at the median of >=3
+fresh training seeds, spread reported**, plus a noise-floor lever (run
+C's recipe re-seeded). Checkpoints: `models/v3_<lever>_s<seed>.pt`.
+
+Verdict (`models/real_gate_v3.json`, three seeds per lever):
+
+- **v2's calibrated-FAIL was seed noise.** The floor's high-tail margins
+  straddle zero (−0.40 / −0.58 / +0.04pp); v2's letter-miss sits inside
+  that spread. The LOW tail beats historical resampling at every seed
+  (−0.65 / −0.67 / −1.06pp) — the crash tail is a real, robust GAN win,
+  ~3× closer than the bootstrap.
+- **V3-1 (tail-weighted critic loss) passes at 3/3 seeds** — the only
+  lever with R5+R6+R1..R3 green everywhere — with spreads tighter than
+  the recipe's own (0.41 / 0.19pp). Its median edge over the free lever
+  is <=0.2pp, inside its own spread: it buys **consistency**, not
+  magnitude. Honest cost: var-ratio drift 1.13–1.17 (slight overshoot).
+- **V3-2 (`termq`) stays scaffolded and unrun** — declared, not fired; a
+  lever that trains the terminal law directly is for a different
+  question.
+
+Updated claim: **resample for convenience; train when you need the crash
+tail closer than resampling can see, or probability beyond your sample's
+horizon.**
+
 ## Ship status (v1 FINAL, 2026-10-05)
 
 Live option pricing works end-to-end: keyless spot fetch, realized-vol

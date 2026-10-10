@@ -107,6 +107,36 @@ def fig_tail_ccdf(rets: torch.Tensor, gen: torch.Tensor, gauss: np.ndarray,
           "(right of the dashed line), probability resampling cannot emit.")
 
 
+def fig_v3_margins(v3rows: dict[str, list[dict]]) -> None:
+    """v3's verdict picture: per-lever per-seed margins vs the hist-sim bar
+    (zero line), both tails. NEGATIVE = GAN closer = win."""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), sharey=True)
+    levers = list(v3rows)
+    colors = ("#4c72b0", "#dd8452", "#55a868")
+    for ax, tail in zip(axes, ("high", "low")):
+        for i, lev in enumerate(levers):
+            ys = [r["margins_pp"][tail] for r in v3rows[lev]]
+            xs = np.full(len(ys), i) + np.linspace(-0.12, 0.12, len(ys))
+            ax.scatter(xs, ys, s=42, color=colors[i % 3],
+                       label=f"{lev} (n={len(ys)})" if tail == "high" else None,
+                       zorder=3)
+        ax.axhline(0, color="k", lw=1, ls=":", zorder=2)
+        ax.set_xticks(range(len(levers)), levers)
+        ax.set_title(f"{tail} tail (q99.9)", fontsize=10)
+        ax.grid(alpha=0.25)
+    axes[0].set_ylabel("margin vs hist-sim (pp)\nnegative = GAN closer = win")
+    axes[0].legend(fontsize=8)
+    fig.suptitle("v3: per-seed margins — v2's 'miss' was seed noise; the crash tail is the robust win")
+    fig.tight_layout()
+    _save(fig, "v3_margins.png",
+          "R5 margins by lever and training seed (negative = the GAN sits "
+          "closer to the real q99.9 than historical resampling). Floor "
+          "(run-C recipe reseeded): high tail straddles zero — v2's 0.034pp "
+          "miss was a draw, not the recipe; low tail negative at every seed. "
+          "tailcrit (V3-1): negative at every seed on BOTH tails, tightest "
+          "spread — consistency, the honest edge.")
+
+
 def fig_fan_3d(gen: torch.Tensor, real_panel: torch.Tensor) -> None:
     gnp, rnp = gen[:80].cpu().numpy(), real_panel[::96][:80].cpu().numpy()  # 80 spread rows
     fig = plt.figure(figsize=(12, 5.5))
@@ -232,6 +262,23 @@ def main() -> int:
     fig_fan_3d(gen, panel)
     fig_density_3d(rets, gen)
     fig_terminal_hist()
+
+    # v3 verdict figure: rows read from the gate stamp (no re-eval)
+    with open(HERE / "models" / "real_gate_v3.json") as f:
+        v3 = json.load(f)
+    tailcrit_seeds = [p.stem.split("_s")[1] for p in
+                      sorted(HERE.glob("models/v3_tailcrit_s*.pt"))]
+    floor_seeds = [p.stem.split("_s")[1] for p in
+                   sorted(HERE.glob("models/v3_c_s*.pt"))]
+    tc = v3["tailcrit"]["margins_pp_high"]; fl = v3["noise_floor"]["margins_pp_high"]
+    tcl = v3["tailcrit"]["margins_pp_low"];  fll = v3["noise_floor"]["margins_pp_low"]
+    rows3 = {
+        "c": [dict(margins_pp=dict(high=h, low=l))
+              for h, l in zip(fl, fll)],
+        "tailcrit": [dict(margins_pp=dict(high=h, low=l))
+                     for h, l in zip(tc, tcl)],
+    }
+    fig_v3_margins(rows3)
 
     MANIFEST["_provenance"] = {
         "model_a": "models/wgan_real_spy_10y.pt (run A: conv, 16k, real SPY 10y 2016-2026)",

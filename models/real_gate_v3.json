@@ -1,0 +1,28 @@
+{
+  "contract": "v3 committed pre-training at e1bdf77: multi-seed claims rule (median + spread over >=3 fresh training seeds), levers pre-declared (c = seed noise floor at run-C's recipe / tailcrit = V3-1 tail-weighted critic loss / termq = V3-2 terminal-law aux, scaffolded UNRUN)",
+  "measured": "2026-10-10",
+  "data": "SPY 10y (identical regime to v2's contract; frozen v2 gate pieces reused verbatim)",
+  "noise_floor": {
+    "seeds": [3, 7, 11],
+    "margins_pp_high": [-0.403, -0.582, 0.044],
+    "margins_pp_low": [-0.647, -0.673, -1.057],
+    "spread_high": 0.626, "spread_low": 0.410,
+    "r5_pass": "2/3 (the single miss by +0.044pp)",
+    "finding": "v2's headline 'miss by 0.034pp' sits INSIDE the recipe's own seed spread — it was a draw, not the recipe. Sorted across all four known seeds of the recipe (incl. v2's original), the median high-tail margin is ~-0.18pp; the LOW tail beats hist-sim at every seed (range -0.65..-1.06)."
+  },
+  "tailcrit": {
+    "seeds": [101, 2026, 55],
+    "margins_pp_high": [-0.42, -0.498, -0.829],
+    "margins_pp_low": [-0.501, -0.58, -0.386],
+    "spread_high": 0.409, "spread_low": 0.194,
+    "r5_pass": "3/3",
+    "R6_kurt": [13.5, 13.8, 15.9], "R6": "3/3 PASS", "var_ratio": [1.17, 1.13, 1.16],
+    "finding": "The only lever passing R5+R6+R1..R3 at every seed, with the tightest spread (low-tail 0.19pp). Median edge over the free sampling lever is <=0.2pp — inside its own seed spread. Honest claim: consistency, not magnitude."
+  },
+  "termq": {
+    "status": "SCAFFOLDED, NOT RUN",
+    "reason": "the pre-declared question was answered by the honest levers; a lever that trains the terminal law directly (making terminal gate rows 'trained-on') is not fired without a question requiring it"
+  },
+  "ladder_conclusion": "v2's calibrated-FAIL was seed noise (the claims rule exists because the rebuild nondeterminism taught us single draws are not claims). At 10y: the crash tail is where the trained model genuinely wins (~3x closer than resampling, every seed); the rally tail is a coin flip at the bar; training-time tail shaping (V3-1) buys run-to-run consistency. Resample for convenience, train for the crash tail and the beyond-extreme mass — both now measured claims.",
+  "reopen_lever": "termq (declared, scaffolded, unrun); objective-level work only if a question needs the trained-on tradeoff"
+}
