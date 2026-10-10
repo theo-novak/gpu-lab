@@ -37,8 +37,10 @@ def main() -> int:
 
     if LEVER == "c":
         kwargs: dict = dict(critic="conv", center=True, tail_gamma=1.0)
-    elif LEVER in ("tailcrit", "termq"):
-        raise SystemExit(f"lever '{LEVER}' lands with Bucket 2 (wganlib support pending)")
+    elif LEVER == "tailcrit":
+        kwargs = dict(critic="conv", center=True, tail_gamma_c=1.0)
+    elif LEVER == "termq":
+        raise SystemExit("lever 'termq' lands with Bucket 2 (wganlib support pending)")
     else:
         raise SystemExit(f"unknown lever {LEVER}")
 

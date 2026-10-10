@@ -263,6 +263,7 @@ class Trainer:
         critic: str = "mlp",
         aux_var: float | None = None,
         tail_gamma: float | None = None,
+        tail_gamma_c: float | None = None,
         dt: float | None = None,
     ):
         self.data = data
@@ -283,6 +284,7 @@ class Trainer:
             noise_dim=noise_dim, n_critic=n_critic, gp_lambda=gp_lambda,
             lr=lr, betas=betas, batch=batch, seed=seed, center=center,
             critic=critic, aux_var=aux_var, tail_gamma=tail_gamma,
+            tail_gamma_c=tail_gamma_c,
         )
         self.g_rng = torch.Generator(device=self.dev.type); self.g_rng.manual_seed(seed)
         self.gp_rng = torch.Generator(device=self.dev.type); self.gp_rng.manual_seed(seed + 1)
@@ -320,6 +322,20 @@ class Trainer:
         # more often than a calm one at gamma=1. Pure function of data and
         # gamma, so checkpoint restore recomputes it identically.
         self.tail_gamma = tail_gamma
+        # v3 lever "tailcrit": tail-weighted CRITIC loss (declared V3-1).
+        # Per-PATH critic-loss weight w_i = 1 + gamma_c * (winmax_i / q99)^2 —
+        # the same tail emphasis as run-C sampling, applied inside the W1
+        # game: batches containing tail events dominate the critic fit.
+        # Declared as its own knob so gamma_c can be swept independently of
+        # run-C's sampling gamma_s.
+        self.tail_gamma_c = tail_gamma_c
+        if tail_gamma_c is not None:
+            q99 = data.abs().flatten().float().quantile(0.99).item()
+            wmax = data.float().abs().max(dim=1).values.double()
+            wc = 1.0 + tail_gamma_c * (wmax / q99) ** 2
+            self._critic_w = (wc / wc.max()).float()
+        else:
+            self._critic_w = None
         if tail_gamma is not None:
             q99 = data.abs().flatten().float().quantile(0.99).item()
             wmax = data.float().abs().max(dim=1).values.double()
@@ -355,11 +371,24 @@ class Trainer:
                 else:
                     idx = torch.randint(0, n_paths, (batch,), generator=self.batch_rng, device=dev)
                 real = data[idx]
+                if self._critic_w is not None:
+                    wc_b = self._critic_w[idx].to(dev)
+                else:
+                    wc_b = None
                 with torch.no_grad():
                     z = torch.randn(batch, self.config["noise_dim"], generator=self.g_rng, device=dev)
                     fake = self.G(z)
-                d_real = self.D(real).mean()
-                d_fake = self.D(fake).mean()
+                if wc_b is not None:
+                    # per-path tail-weighted real-side W1 estimate (weights
+                    # mean-1-normalized so D's scale stays comparable to the
+                    # GP's; the fake side stays unweighted — the emphasis is
+                    # "real tail mass matters in the critic's fit")
+                    wr = wc_b / wc_b.mean()
+                    d_real = (wr * self.D(real).squeeze(-1)).mean()
+                    d_fake = self.D(fake).mean()
+                else:
+                    d_real = self.D(real).mean()
+                    d_fake = self.D(fake).mean()
                 gp = gradient_penalty(self.D, real, fake, self.gp_rng)
                 d_loss = d_fake - d_real + lam * gp
                 self.opt_d.zero_grad(set_to_none=True)
@@ -464,6 +493,7 @@ class Trainer:
             critic=cfg.get("critic", "mlp"),
             aux_var=cfg.get("aux_var"),
             tail_gamma=cfg.get("tail_gamma"),
+            tail_gamma_c=cfg.get("tail_gamma_c"),
         )
         # fingerprint check: the data passed in must BE the data this
         # checkpoint was trained on (scale is stored as a float, mu as a

@@ -339,6 +339,38 @@ class TestTailWeights:
         assert torch.allclose(tr2._sample_w, tr._sample_w)
 
 
+class TestTailCriticWeights:
+    """V3-1's critic-loss weighting: pure function of (data, gamma_c),
+    heaviest = extreme window, mean-1 normalized, checkpoints."""
+
+    def test_heaviest_is_extreme_and_normalized(self, small_data):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=7,
+                        tail_gamma_c=1.0)
+        wmax = small_data.float().abs().max(dim=1).values
+        assert tr._critic_w.shape == (small_data.shape[0],)
+        assert tr._critic_w.max().item() == pytest.approx(1.0)
+        assert tr._critic_w.argmax().item() == wmax.argmax().item()
+
+    def test_checkpoint_roundtrip(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=13,
+                        tail_gamma_c=0.5)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "tc.pt"
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(tr.ckpt_path, data=small_data)
+        assert tr2.config["tail_gamma_c"] == 0.5
+        assert torch.allclose(tr2._critic_w, tr._critic_w)
+
+    def test_smooth_when_gamma_zero(self, small_data):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=7,
+                        tail_gamma_c=1e-9)
+        assert tr._critic_w.max().item() == pytest.approx(1.0, rel=1e-3)
+        assert tr._critic_w.min().item() == pytest.approx(1.0, rel=1e-3)
+
+
 class TestCkptFileRestore:
     """The Oct-10 incident rule: a checkpoint remembers the file it was
     saved to, so from_checkpoint can never fall back to the default slot
