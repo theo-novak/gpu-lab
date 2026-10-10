@@ -277,6 +277,89 @@ class TestDataFingerprint:
                            tr2.generate_paths(8, seed=1))
 
 
+class TestAuxVar:
+    """Run-B's variance auxiliary: exact log-ratio form, wired, checkpointed."""
+
+    def test_penalty_zero_at_target(self):
+        t = 0.19
+        assert wl.aux_var_penalty(torch.tensor(t), t).item() == pytest.approx(0.0, abs=1e-8)
+
+    def test_penalty_symmetric_and_positive(self):
+        t = 0.19
+        a = wl.aux_var_penalty(torch.tensor(t / 4), t).item()
+        b = wl.aux_var_penalty(torch.tensor(t * 4), t).item()
+        assert a == pytest.approx(b, rel=1e-4) and a > 0
+
+    def test_trainer_aux_matches_scaled_data_target(self, small_data):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=7, aux_var=0.1)
+        scaled = (small_data - tr.mu) / tr.scale
+        assert tr._aux_target == pytest.approx(scaled.sum(1).var(unbiased=False).item())
+
+    def test_aux_trains_and_checkpoints(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=9, aux_var=0.1)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "aux.pt"
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(tr.ckpt_path, data=small_data)
+        assert tr2.config["aux_var"] == 0.1
+        assert tr2._aux_target == tr._aux_target
+
+
+class TestTailWeights:
+    """Run-C's tail-weighted sampling: weights a declared pure function of
+    (data, gamma); heaviest weight MUST be the window with the biggest |r|."""
+
+    def test_heaviest_weight_is_the_extreme_window(self, small_data):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=7,
+                        tail_gamma=1.0)
+        wmax = small_data.float().abs().max(dim=1).values
+        assert tr._sample_w.shape == (small_data.shape[0],)
+        assert tr._sample_w.sum().item() == pytest.approx(1.0, abs=1e-5)
+        assert tr._sample_w.argmax().item() == wmax.argmax().item(), (
+            "the extreme window must be the most-sampled one"
+        )
+
+    def test_no_gamma_is_uniform_equivalent(self, small_data):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=7)
+        assert tr._sample_w is None
+
+    def test_tail_gamma_checkpoints_and_trains(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=11,
+                        tail_gamma=2.0)
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.ckpt_path = tmp_path / "tail.pt"
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(tr.ckpt_path, data=small_data)
+        assert tr2.config["tail_gamma"] == 2.0
+        assert torch.allclose(tr2._sample_w, tr._sample_w)
+
+
+class TestCkptFileRestore:
+    """The Oct-10 incident rule: a checkpoint remembers the file it was
+    saved to, so from_checkpoint can never fall back to the default slot
+    and stamp real-panel weights into the synthetic exhibit's file."""
+
+    def test_ckpt_path_survives_roundtrip(self, small_data, tmp_path):
+        tr = wl.Trainer(small_data, hidden_g=16, hidden_d=32, depth=2,
+                        noise_dim=4, n_critic=1, batch=32, seed=5)
+        slot = tmp_path / "named_slot.pt"
+        tr.ckpt_path = slot
+        tr.train(2, log_every=10**9, ckpt_every=10**9)
+        tr.save()
+        tr2 = wl.Trainer.from_checkpoint(slot, data=small_data)
+        assert tr2.ckpt_path == slot, (
+            "from_checkpoint must restore the checkpoint's own file path"
+        )
+        # the default-slot trap: without the rule, tr2.ckpt_path silently
+        # points at wgan_notebook.pt and the next save() clobbers the exhibit
+        assert tr2.ckpt_path.name != "wgan_notebook.pt"
+
+
 class TestGradientPenalty:
     def test_gp_zero_for_linear_critic(self, small_data):
         """A linear critic has constant gradient norm along the path —

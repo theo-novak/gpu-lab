@@ -126,6 +126,13 @@ class ConvCritic(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+def aux_var_penalty(v: torch.Tensor, target: float) -> torch.Tensor:
+    """v2 run-B auxiliary: squared log-ratio of batch Var[log S_T] to target.
+    Scale-free (log form), O(1) at convergence, so it composes with the
+    WGAN loss and lambda=10 machinery without a units argument."""
+    return ((v.log() - math.log(target)) ** 2).mean()
+
+
 def gradient_penalty(critic, real, fake, gp_rng):
     """(||grad D(interp)||_2 - 1)^2 on random real/fake mixtures."""
     eps = torch.rand(real.shape[0], 1, generator=gp_rng, device=real.device)
@@ -254,6 +261,8 @@ class Trainer:
         seed: int = SEED,
         center: bool = True,
         critic: str = "mlp",
+        aux_var: float | None = None,
+        tail_gamma: float | None = None,
         dt: float | None = None,
     ):
         self.data = data
@@ -273,11 +282,13 @@ class Trainer:
             hidden_g=hidden_g, hidden_d=hidden_d, depth=depth,
             noise_dim=noise_dim, n_critic=n_critic, gp_lambda=gp_lambda,
             lr=lr, betas=betas, batch=batch, seed=seed, center=center,
-            critic=critic,
+            critic=critic, aux_var=aux_var, tail_gamma=tail_gamma,
         )
         self.g_rng = torch.Generator(device=self.dev.type); self.g_rng.manual_seed(seed)
         self.gp_rng = torch.Generator(device=self.dev.type); self.gp_rng.manual_seed(seed + 1)
         self.batch_rng = torch.Generator(device=self.dev.type); self.batch_rng.manual_seed(seed + 2)
+        # CPU twin for multinomial (weighted draws stay on CPU; index moved)
+        self.batch_rng_cpu = torch.Generator(); self.batch_rng_cpu.manual_seed(seed + 3)
         # Seed the GLOBAL torch RNG too: nn.Linear's default init draws from it,
         # and it advances between constructions — without this, two same-seed
         # trainers start with DIFFERENT weights (caught by the test suite Oct 2026;
@@ -295,6 +306,30 @@ class Trainer:
         self.iter = 0
         self.history = []   # rows: (iter, d_real, gap=d_fake-d_real, gp, g_loss)
         self._gmean = None  # generator per-step mean (scaled units) — lazy cache
+        # v2 run-B lever: variance auxiliary loss (pre-declared ladder).
+        # Target = the SCALED data's Var[log S_T] (64-day cumulative).
+        # Scale-free log-ratio form keeps the term O(1) without tuning.
+        self.aux_var = aux_var
+        if aux_var is not None:
+            scaled_target = (data - self.mu) / self.scale
+            self._aux_target = scaled_target.sum(1).var(unbiased=False).item()
+        # v2 run-C lever: tail-weighted batch sampling (pre-declared ladder).
+        # Sampling prob over TRAINING panels proportional to
+        #   1 + gamma * (window max |r| / |r|_99 of the whole data)^2
+        # — the COVID-magnitude window (|r| ~ 4x the 99th pct) draws ~17x
+        # more often than a calm one at gamma=1. Pure function of data and
+        # gamma, so checkpoint restore recomputes it identically.
+        self.tail_gamma = tail_gamma
+        if tail_gamma is not None:
+            q99 = data.abs().flatten().float().quantile(0.99).item()
+            wmax = data.float().abs().max(dim=1).values.double()
+            w = 1.0 + tail_gamma * (wmax / q99) ** 2
+            # weights live on CPU ALWAYS (they inherit data's device through
+            # the arithmetic otherwise — which is what broke the GPU path):
+            # multinomial draws there with the CPU generator, indices move
+            self._sample_w = (w / w.sum()).float().cpu()
+        else:
+            self._sample_w = None
 
         MODEL_DIR.mkdir(exist_ok=True)
         self.ckpt_path = MODEL_DIR / "wgan_notebook.pt"
@@ -312,7 +347,13 @@ class Trainer:
             if it == self.iter + 1:
                 self._gmean = None   # weights moved: cached gen-mean is stale
             for _ in range(n_critic):
-                idx = torch.randint(0, n_paths, (batch,), generator=self.batch_rng, device=dev)
+                if self._sample_w is not None:
+                    idx = torch.multinomial(
+                        self._sample_w, batch, replacement=True,
+                        generator=self.batch_rng_cpu,
+                    ).to(dev)
+                else:
+                    idx = torch.randint(0, n_paths, (batch,), generator=self.batch_rng, device=dev)
                 real = data[idx]
                 with torch.no_grad():
                     z = torch.randn(batch, self.config["noise_dim"], generator=self.g_rng, device=dev)
@@ -328,6 +369,11 @@ class Trainer:
             z = torch.randn(batch, self.config["noise_dim"], generator=self.g_rng, device=dev)
             fake = self.G(z)
             g_loss = -self.D(fake).mean()
+            if self.aux_var is not None:
+                # v2 run-B aux: push Var[log S_T] of THIS BATCH toward the
+                # target (log-ratio form; gradients flow through fakes)
+                v = fake.sum(1).var(unbiased=False)
+                g_loss = g_loss + self.aux_var * aux_var_penalty(v, self._aux_target)
             self.opt_g.zero_grad(set_to_none=True)
             g_loss.backward()
             self.opt_g.step()
@@ -356,6 +402,9 @@ class Trainer:
                 "scale": self.scale,
                 "mu": self.mu,
                 "config": self.config,
+                # provenance TOP-LEVEL, not in config (config = training
+                # identity; the origin path must not affect equality checks)
+                "ckpt_file": str(self.ckpt_path),
                 "history": self.history,
             },
             self.ckpt_path,
@@ -413,6 +462,8 @@ class Trainer:
             lr=cfg["lr"], betas=tuple(cfg["betas"]), batch=cfg["batch"],
             seed=cfg["seed"], center=cfg.get("center", False),
             critic=cfg.get("critic", "mlp"),
+            aux_var=cfg.get("aux_var"),
+            tail_gamma=cfg.get("tail_gamma"),
         )
         # fingerprint check: the data passed in must BE the data this
         # checkpoint was trained on (scale is stored as a float, mu as a
@@ -440,6 +491,13 @@ class Trainer:
         tr.opt_g.load_state_dict(ck["opt_g"])
         tr.opt_d.load_state_dict(ck["opt_d"])
         tr.history = list(ck.get("history", []))
+        # a checkpoint remembers the file it was saved to: default-slot saves
+        # (wgan_notebook.pt) can then never silently overwrite the synthetic
+        # exhibit slot with real-panel weights again (the Oct-10 incident —
+        # run-A resume stamped 1k-checkpoints into the default slot because
+        # from_checkpoint had no memory of the origin path)
+        if ck.get("ckpt_file"):
+            tr.ckpt_path = Path(ck["ckpt_file"])
         return tr
 
     def scale_tensor(self):
