@@ -71,8 +71,8 @@ def summarize(levers: dict[str, list[dict]]) -> None:
     print(f"{'lever':10s} {'n':>2s} {'med_hi':>7s} {'spr_hi':>7s} "
           f"{'med_lo':>7s} {'spr_lo':>7s} {'pass':>5s}")
     for lev, rows in levers.items():
-        hi = sorted(r["margins_pp"]["high"] for r in rows)
-        lo = sorted(r["margins_pp"]["low"])
+        hi = sorted(rr["margins_pp"]["high"] for rr in rows)
+        lo = sorted(rr["margins_pp"]["low"] for rr in rows)
         med_hi = hi[len(hi) // 2]
         med_lo = lo[len(lo) // 2]
         spr_hi = hi[-1] - hi[0]
