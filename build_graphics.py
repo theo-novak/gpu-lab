@@ -74,18 +74,22 @@ def fig_loss_curves(ck: dict) -> None:
           "real from fake easily — the gates judge structure, not the critic's score.")
 
 
-def fig_tail_ccdf(rets: torch.Tensor, gen: torch.Tensor, gauss: np.ndarray) -> None:
-    import numpy as _np
-    real = _np.sort(_np.abs(rets.cpu().numpy()))
-    gan = _np.sort(_np.abs(gen.cpu().numpy()))
-    gs = _np.sort(_np.abs(gauss))
+def fig_tail_ccdf(rets: torch.Tensor, gen: torch.Tensor, gauss: np.ndarray,
+                  c_gen: torch.Tensor | None = None) -> None:
+    real = np.sort(np.abs(rets.cpu().numpy()))
+    gan = np.sort(np.abs(gen.cpu().numpy()))
+    gs = np.sort(np.abs(gauss))
     n_r, n_g, n_gs = len(real), len(gan), len(gs)
     fig, ax = plt.subplots(figsize=(9, 6))
-    ax.loglog(real[::-1], _np.arange(1, n_r + 1)[::-1] / n_r, ".", ms=2,
+    ax.loglog(real[::-1], np.arange(1, n_r + 1)[::-1] / n_r, ".", ms=2,
               label=f"real SPY 10y (n={n_r})", alpha=0.7)
-    ax.loglog(gan[::-1], _np.arange(1, n_g + 1)[::-1] / n_g, ".", ms=2,
-              label=f"GAN run A (50k paths, seed {SEED})", alpha=0.7)
-    ax.loglog(gs[::-1], _np.arange(1, n_gs + 1)[::-1] / n_gs, ".", ms=1,
+    ax.loglog(gan[::-1], np.arange(1, n_g + 1)[::-1] / n_g, ".", ms=2,
+              label=f"GAN run A (50k paths, seed {SEED})", alpha=0.6)
+    if c_gen is not None:
+        cg = np.sort(np.abs(c_gen.cpu().numpy()))
+        ax.loglog(cg[::-1], np.arange(1, len(cg) + 1)[::-1] / len(cg), ".",
+                  ms=2, label=f"GAN run C (tail-weighted, 50k paths)", alpha=0.8)
+    ax.loglog(gs[::-1], np.arange(1, n_gs + 1)[::-1] / n_gs, ".", ms=1,
               label="iid Gaussian (3.2M draws)", alpha=0.4)
     xthr = float(rets.abs().max())
     ax.axvline(xthr, color="crimson", lw=1, ls="--",
@@ -95,10 +99,12 @@ def fig_tail_ccdf(rets: torch.Tensor, gen: torch.Tensor, gauss: np.ndarray) -> N
     ax.legend(fontsize=8); ax.grid(alpha=0.2)
     fig.tight_layout()
     _save(fig, "tail_ccdf.png",
-          "Empirical CCDF of absolute daily returns (log-log). The GAN's tail "
-          "curve merges with the Gaussian's past ~2.5% — the measured mechanism "
-          "behind run A's R5 failure: beyond-max mass 0.000000, same blindness "
-          "as historical resampling, for a different reason (objective, not sample).")
+          "Empirical CCDF of absolute daily returns (log-log). Run A's tail "
+          "merges with the Gaussian's past ~2.5% (beyond-max mass 0.000000); "
+          "run C — tail-weighted training — pulls the curve toward the real "
+          "one, misses the pre-registered high-tail bar by 0.034pp, wins the "
+          "low tail 3.5x, and puts ~1 day in 12,800 BEYOND the sample max "
+          "(right of the dashed line), probability resampling cannot emit.")
 
 
 def fig_fan_3d(gen: torch.Tensor, real_panel: torch.Tensor) -> None:
@@ -213,22 +219,25 @@ def main() -> int:
     panel = make_panel(rets, 64, 1).contiguous().to(dev)
     tr = wl.Trainer.from_checkpoint("models/wgan_real_spy_10y.pt", data=panel)
     gen = gen_paths(tr, 50_000)
+    tr_c = wl.Trainer.from_checkpoint("models/wgan_real_spy_10y_tail.pt", data=panel)
+    c_gen = gen_paths(tr_c, 50_000)
     g_np = (torch.randn(3_200_000, generator=torch.Generator().manual_seed(42))
             * rets.std().item() + rets.mean().item())
 
     print("rendering (all sources named in captions):")
     fig_loss_curves(torch.load("models/wgan_real_spy_10y.pt", weights_only=False))
-    fig_tail_ccdf(rets, gen, g_np)
+    fig_tail_ccdf(rets, gen, g_np, c_gen=c_gen)
     fig_fan_3d(gen, panel)
     fig_density_3d(rets, gen)
     fig_terminal_hist()
 
     MANIFEST["_provenance"] = {
         "model_a": "models/wgan_real_spy_10y.pt (run A: conv, 16k, real SPY 10y 2016-2026)",
+        "model_c": "models/wgan_real_spy_10y_tail.pt (run C: conv, 16k, tail_gamma=1)",
         "model_synth": "models/wgan_notebook.pt (conv 16k, synthetic rBergomi teacher)",
         "gen_seed": SEED, "gen_paths": 50_000,
         "gaussian_draws": 3_200_000,
-        "note": "run-B/C exhibit updates follow their gate verdicts (no invented numbers)",
+        "note": "all figures regenerate from committed checkpoints; manifest ships beside them",
     }
     (OUT_REPO / "manifest.json").write_text(json.dumps(MANIFEST, indent=1))
     shutil.copy(OUT_REPO / "manifest.json", SITE_ASSETS / "manifest.json")

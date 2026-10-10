@@ -28,6 +28,48 @@ before anything downstream trains on it.
 | `tail_diag.py` | the decomposition that pinned the call-price miss on the generator's mean offset, not tails (tail-shape gap 0.0007) | diagnosis preserved |
 | `tests/` | 20-test CPU suite (~2 s, no GPU/data): determinism, centering, mean enforcement, retarget-vol, checkpoint round-trips + arch refusal, ConvCritic invariants; session-isolated from `models/` (a near-miss: tests once overwrote the active slot) | 20/20 |
 
+## v2: the tail-extrapolation question (2026-10-10, contract ba090e2)
+
+One question, pre-registered before any v2 training: **does the path-GAN
+beat historical block-resampling precisely beyond the observed tail —
+the one place resampling is structurally blind?** 10y of SPY (2,513
+returns incl. COVID's −11.6%, ~2,386 independent windows vs 2y's ~7);
+block-252 persistence-honest bootstrap CIs (the 64-block CIs failed their
+own self-containment and were widened BEFORE any v2 weights moved). New
+gates: R5 (closer to real q99.9 than hist-sim, high AND low) and R6
+(generated kurtosis ≤ 1.5× real — no exploding tails). A three-rung
+dispersion ladder was pre-declared: A plain retrain → B +variance aux →
+C +tail-weighted sampling (γ=1).
+
+Verdict (full table in `models/real_gate_v2.json`), two-sided as always:
+
+- **The ladder worked**: dispersion 0.45 → 0.58 → **0.95** of real,
+  kurtosis inside the cap, structure PASS on every rung. No
+  rearchitecture needed — training-time shaping fixes what the objective
+  under-weights.
+- **The capability win is real**: run C puts ~1 day in 12,800 **beyond
+  the observed sample extreme** (the COVID-magnitude event) and matches
+  the low tail 3.5× better than the bootstrap (0.30 vs 1.07pp). The
+  bootstrap cannot emit a day beyond its sample max — BY CONSTRUCTION.
+- **The calibrated bar still says no**: R5's high-tail bar went to
+  hist-sim by 0.034pp (0.905 vs 0.871 — noise-close, but the contract
+  was pre-registered and the letter stands). Mid-tail honesty: γ=1
+  overshot q99.5-high (3.87 vs real 3.27).
+- **More data does not teach tails**: run A's 10y retrain produced
+  Gaussian tails (q99.9 3.57% vs Gaussian's 3.56%) with the project's
+  best-ever structure. Data scale is neutral-to-tails; the residual gap
+  is objective-bound — same conclusion as the synthetic gate.
+
+So: **resample for calibrated accuracy; train if you need probability
+past your sample's horizon.** Both claims measured under one committed
+contract. Reopen lever: the objective itself (tail/payoff-aware critic)
+or regime-conditional generation — NOT more data (run A).
+
+Incident worth its own line: a resume without a named slot stamped 1k
+checkpoints into the default slot and clobbered the synthetic exhibit.
+Library rule added: checkpoints remember `ckpt_file` provenance and
+`from_checkpoint` restores the right slot. 31-test suite pins it.
+
 ## Ship status (v1 FINAL, 2026-10-05)
 
 Live option pricing works end-to-end: keyless spot fetch, realized-vol

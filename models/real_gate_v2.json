@@ -1,0 +1,32 @@
+{
+  "contract": "gate v2 committed pre-training at ba090e2 (evaluate_real_v2.py); runs pre-declared ladder A (plain retrain) -> B (+aux variance) -> C (+tail-weighted sampling gamma=1)",
+  "measured": "2026-10-10",
+  "data": "SPY daily 10y (2,513 returns, 2016-10..2026-10, incl. COVID -11.59%); panel (2450, 64); ~2386 independent windows",
+  "runs": {
+    "A": {
+      "ckpt": "models/wgan_real_spy_10y.pt",
+      "cfg": {"critic": "conv", "center": true, "iter": 16000},
+      "structure": "R1 4/4 PASS; roughness d0.008, leverage d0.009 (best structure of the project)",
+      "tails": {"q99_9_high_real": 7.33, "q99_9_hist_sim": 8.20, "q99_9_gan": 3.57, "q99_9_iid_gauss": 3.56, "beyond_max_mass": 0.000000},
+      "verdict": "R5 FAIL — GAN tail statistically identical to Gaussian; more data taught structure, not tails"
+    },
+    "B": {
+      "ckpt": "models/wgan_real_spy_10y_aux.pt",
+      "cfg": {"critic": "conv", "center": true, "aux_var": 1.0, "iter": 16000},
+      "structure": "R1 4/4 PASS",
+      "tails": {"q99_9_gan": 4.47, "beyond_max_mass": 0.000087},
+      "dispersion": {"var_ratio": 0.58, "R3": "PASS"},
+      "verdict": "R5 FAIL (|dq|=2.86pp vs hist 0.87pp) — but FIRST positive beyond-tail mass: indirect variance shaping propagates to tails"
+    },
+    "C": {
+      "ckpt": "models/wgan_real_spy_10y_tail.pt",
+      "cfg": {"critic": "conv", "center": true, "tail_gamma": 1.0, "iter": 16000},
+      "structure": "R1 4/4 PASS",
+      "tails": {"q99_9_gan": 6.43, "q99_9_low_gan": -6.76, "beyond_max_mass": 0.000078},
+      "dispersion": {"var_ratio": 0.95, "kurtosis": 13.4, "R3": "PASS", "R6": "PASS (cap 26.9)"},
+      "verdict": "R5 FAIL BY 0.034pp (|dq|=0.905 vs hist 0.871) — high-tail miss is statistical-noise-close; WON the low tail (0.30 vs 1.07pp); tail-weighting overshot the q99.5 mid-tail (3.87 vs 3.27)"
+    }
+  },
+  "ladder_conclusion": "Calibrated-accuracy bar (R5): historical block-resampling keeps the crown on BOTH tails at 10y. Capability bar (structural): the GAN is now the only mechanism in the comparison that emits probability beyond the observed sample extreme (0.000078) and matches real dispersion (0.95). The dispersion fix ladder worked (0.45 -> 0.58 -> 0.95) without rearchitecture; the residual gap is objective-bound, consistent with the synthetic-gate finding.",
+  "reopen_lever": "the objective itself (payoff/tail-aware critic) or regime-conditional generation; NOT more data (run A proved data scale neutral-to-tails)"
+}
