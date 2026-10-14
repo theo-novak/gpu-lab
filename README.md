@@ -24,6 +24,7 @@ before anything downstream trains on it.
 | `train_wgan_notebook.ipynb` | VS Code notebook: knobs (proven/big/max), chunked training, honest report card, economic test, reality check vs SPY/AAPL/JPM | done, executed copy tracked |
 | `realdata.py` | Yahoo chart API (no key): 2y daily returns + live spot, cached under `data/real/` | done |
 | `price_cli.py` | **the ship**: `uv run python price_cli.py SPY --days 21` → live spot, realized vol, three prices side-by-side (BS baseline / exact engine / WGAN-GP with measured-verdict stamp) | shipped v1 |
+| `scenario_cli.py` | **the other ship** (uses-branch): prompted ticker input (or argv list), per-ticker resampled 64-day path-bundle graphs + drawdown tables; the tool that beat the GAN, as a 1-command UX | shipped 2026-10-10 |
 | `train_centered.py` | gate-1 retrains (centered data; `proven`, `big`, or `conv` critic), prints the economic verdict | three verdicts measured |
 | `tail_diag.py` | the decomposition that pinned the call-price miss on the generator's mean offset, not tails (tail-shape gap 0.0007) | diagnosis preserved |
 | `tests/` | 20-test CPU suite (~2 s, no GPU/data): determinism, centering, mean enforcement, retarget-vol, checkpoint round-trips + arch refusal, ConvCritic invariants; session-isolated from `models/` (a near-miss: tests once overwrote the active slot) | 20/20 |
