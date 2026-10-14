@@ -172,52 +172,144 @@ The science lives on `main`; this branch accumulates **plain-English ways
 to use what the project built.** Rule: a use ships only with its honesty
 note — what the tool can't tell you is part of the tool.
 
+### Getting the package running (one-time, ~2 minutes)
+
+```bash
+git clone https://github.com/theo-novak/gpu-lab && cd gpu-lab
+uv sync                     # installs everything; torch comes from the cu130 index
+uv run pytest tests/ -q     # sanity: 34/34 must pass
+```
+
+Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), and any
+NVIDIA GPU (CPU works for everything except training speed; the market
+data is fetched keyless from Yahoo on first use, then cached in
+`data/real/`). Network needed on first fetch per ticker only.
+
 ### 1. `scenario_cli.py` — resampled scenario bundles (SHIPPED)
 
 **The tool that beat the GAN, as a one-command UX.** Historical
 block-resampling won v2/v3's calibrated gates; this wraps it so you never
-touch the library:
+touch the library.
 
 ```bash
 uv run python scenario_cli.py            # prompts: "Ticker(s), comma-separated [SPY]:"
 uv run python scenario_cli.py SPY QQQ    # or skip the prompt
+uv run python scenario_cli.py --help     # also prints this honest preamble
 # flags: --years 5  --paths 2000  --days 64  --seed 2026  --quiet
 ```
 
-Per ticker it prints a mini risk table (p5/median/p95 of the 64-day
-return, drawdown percentiles, P(touch a 10% drawdown), the observed
-worst-day ceiling) and writes `report/scenarios/<TICKER>_scenario_<date>.png`
-— 250 sample paths + the p5–p95 band + median + stats footer, one chart
-per ticker, reproducible by seed.
+Input format (prompt or argv): comma-separated Yahoo tickers —
+`SPY`, `SPY, QQQ, 2773.HK`, `BTC-USD`. Per ticker it prints a mini risk
+table (p5/median/p95 of the N-day return, drawdown percentiles,
+P(touch a 10% drawdown), the observed worst-day ceiling) and writes
+`report/scenarios/<TICKER>_scenario_<date>.png` — sample paths + the
+p5–p95 band + median + stats footer, reproducible by seed.
 
-Measured flavor from the first ten-tech run (5y, seed 2026, 2,000 paths
-each): MSFT/AAPL are the boring tails (P(DD>10%) 61–65%), NVDA pairs a
-−31% bad-quarter tail with +52% upside, and TSLA touches a double-digit
-drawdown in **99.5%** of its 2,000 resampled quarters.
+Example output (see `docs/scenario_cli_SPY_example.png`; from the first
+ten-tech run, 5y history, seed 2026, 2,000 paths each): MSFT/AAPL are
+the boring tails (P(DD>10%) 61–65%), NVDA pairs a −31% bad-quarter tail
+with +52% upside, and TSLA touches a double-digit drawdown in **99.5%**
+of its 2,000 resampled quarters.
 
 **Honesty note (on every chart):** resampling's tail IS its sample —
-no generated day can exceed the observed worst day. This is the v2/v3
-verdict's complement: calibrated accuracy comes from resampling; the
-(crash-tail / beyond-extreme) capability lives in the trained models.
+no generated day can exceed the observed worst day. The v2/v3 verdict's
+complement: calibrated accuracy comes from resampling; the crash-tail /
+beyond-extreme capability belongs to the trained models (see v3).
 
-### 2. Market-pulse daily log (PLANNED — next natural use)
+### 2. `pulse_cli.py` — the market-pulse daily log (SHIPPED)
 
-`price_cli` already fetches spot + realized vol; a daily cron appending
-BS-vs-engine spreads + realized vol to a CSV turns it into a growing
-personal record of regime shifts (a Oct-2025-style vol spike shows up
-loudly in the spread).
+One row per run per ticker: date, spot, realized vol, ATM-21d Black-
+Scholes vs the rough-vol engine price, and their spread — appended to
+`report/pulse/pulse.csv`. Run it daily; the log becomes a growing
+personal record of how the BS-vs-rough-vol disagreement moves through
+regimes (a Oct-2025-style vol spike shows up loudly).
 
-### 3. Rough-vol Monte Carlo for arbitrary instruments (PLANNED)
+```bash
+uv run python pulse_cli.py SPY QQQ       # snapshot now (any tickers)
+uv run python pulse_cli.py --show        # pretty-print the log so far
+uv run python pulse_cli.py --n 20        # last 20 rows
+# flags: --days 21 (option horizon)  --vol-years 2 (realized-vol window)
+# daily automation: Windows Task Scheduler -> "uv run python pulse_cli.py"
+#   from the repo dir; or ask Hermes for a cronjob.
+```
 
-The validated engine answers "odds of a X% drawdown over N days under
-rough vol, not GBM" for any horizon the 64-step grid covers — seconds
-on the GPU, one parameter change.
+Example first row (2026-10-14): SPY spot 768.09, realized vol 11.1%,
+BS 9.80 vs engine 8.68 → spread **−11.4%** (the rough-vol view prices
+short ATM calls lower at calm tape). Read the spread as model
+disagreement, not edge.
 
-### 4. Portfolio stress-table runner (PLANNED)
+**Honesty note:** the engine prices under rough vol (H=0.1) calibrated
+to realized vol, no IV surface (option chains are auth-gated keyless) —
+both prices share the same input vol by design. It's a fixed-lens
+observation of regimes, not a trading signal.
 
-Feed scenario_cli a personal ticker list (e.g. a real portfolio), get a
-combined table: per-name bad-quarter tails + portfolio-level DD
-distribution under joint resampling.
+### 3. `mc_oracle.py` — rough-vol MC odds for arbitrary scenarios (SHIPPED)
+
+The validated engine as an oracle: "odds of X over N days, under rough
+volatility rather than GBM." Calibrated to any ticker's realized vol, or
+run at any explicit vol level.
+
+```bash
+uv run python mc_oracle.py SPY --dd 10 --lose 5        # P(DD>=10%), P(ret<=-5%)
+uv run python mc_oracle.py SPY --days 126 --gain 20    # longer horizon
+uv run python mc_oracle.py --vol 45 --dd 20 --plot     # generic 45%-vol name
+# flags: --days 64  --paths 65536  --vol-years 5  --seed 2026  --plot
+```
+
+Pass any combination of `--dd X` (P of a max-drawdown ≥ X), `--lose X`
+(P of total return ≤ −X), `--gain X` (P of ≥ +X). Horizon is any number
+of trading days — the engine is exact, no grid cap (that was the GAN's
+limit, not this model's). `--plot` also renders the path fan with p5/
+median/p95 to `report/oracle/`.
+
+Sample answers (seed 2026, 65,536 paths): SPY at 17.1% realized vol,
+64d: P(DD≥10%) 26.3% — vs 24.3% from scenario_cli's resampler. Two
+independent tools, one question, ~2pp apart: a running cross-check.
+A generic 45%-vol name over 126d: P(DD≥20%) 53.8%.
+
+**Honesty note:** answers are under the rBergomi **model** view
+(H=0.1, η=1.9, ρ=−0.9, flat forward variance) — a structured assumption,
+not a forecast. Flat ξ₀ means no vol term structure; single-asset means
+no correlations (use portfolio_cli for joint questions).
+
+### 4. `portfolio_cli.py` — joint portfolio stress table (SHIPPED)
+
+Scenario bundles for a WHOLE portfolio: weights + tickers in, the
+portfolio's own drawdown distribution out. **Joint calendar bootstrap**:
+each scenario re-samples one common historical window for every name,
+so real cross-correlations survive (independent per-name resampling
+would silently destroy them — the classic quiet mistake).
+
+```bash
+uv run python portfolio_cli.py                                  # prompts
+uv run python portfolio_cli.py "SPY:40,QQQ:25,NVDA:15,V:10,CASH:10"
+uv run python portfolio_cli.py SPY:.5 QQQ:.3 TSLA:.2 --days 126 --plot
+# weights: percentages (40) or fractions (.4); CASH = 0-return damping
+# flags: --days 64  --paths 3000  --years 5  --seed 2026  --plot
+```
+
+Output: joint-history window (names are date-aligned to their overlap,
+printed), the market-weighted p5/median/p95 portfolio return, the
+portfolio maxDD distribution (1-in-20 vs median), P(DD≥10%),
+P(total≤−5%), and a path-fan chart to `report/portfolio/`.
+
+Example (`SPY:40,QQQ:25,NVDA:15,V:20`, 5y joint history 2021-10..2026-10,
+3,000 × 64d scenarios): p5 −12.1%, median +5.3%, 1-in-20 maxDD −24.4%,
+P(DD≥10%) 38.1%. Adding CASH (0-return damped variance): P(DD≥10%)
+drops to 28.4% — diversification you can *see*.
+
+**Honesty note:** the portfolio's tail is the sample's tail (no day
+beyond the joint history's observed extremes); today's weights are
+static within each scenario window; CASH earns nothing (no rate).
+
+### The four tools at a glance
+
+| tool | question it answers | engine? | GPU? | output |
+|---|---|---|---|---|
+| `scenario_cli.py` | what do plausible N-day futures look like per ticker? | no (resampling) | no | per-ticker path-fan PNGs + risk table |
+| `pulse_cli.py` | how does the rough-vol view deviate from BS over time? | yes | no (CPU MC) | appending CSV log |
+| `mc_oracle.py` | what are the odds of X under rough vol? | yes | yes (seconds) | printed odds (+ optional PNG) |
+| `portfolio_cli.py` | what does MY portfolio's bad quarter look like? | no (joint resampling) | no | portfolio path-fan PNG + DD table |
 
 ## Reproduce
 
