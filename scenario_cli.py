@@ -128,6 +128,9 @@ def scenario_report(ticker: str) -> dict:
 
 
 def main() -> int:
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        return 0
     tickers = prompt_tickers()
     print(f"scenario generator — {len(tickers)} ticker(s) | {YEARS}y | "
           f"{PATHS:,} paths x {DAYS}d | seed {SEED}")
