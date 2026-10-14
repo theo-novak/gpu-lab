@@ -166,6 +166,59 @@ must be moved to the GPU explicitly — the first 11k iters of this run
 trained on CPU at 264 ms/iter because fetch_returns hands back a CPU
 tensor (fixed: 60 ms/iter on resumé).
 
+## Practical uses (uses-branch: `feature/practical-uses`)
+
+The science lives on `main`; this branch accumulates **plain-English ways
+to use what the project built.** Rule: a use ships only with its honesty
+note — what the tool can't tell you is part of the tool.
+
+### 1. `scenario_cli.py` — resampled scenario bundles (SHIPPED)
+
+**The tool that beat the GAN, as a one-command UX.** Historical
+block-resampling won v2/v3's calibrated gates; this wraps it so you never
+touch the library:
+
+```bash
+uv run python scenario_cli.py            # prompts: "Ticker(s), comma-separated [SPY]:"
+uv run python scenario_cli.py SPY QQQ    # or skip the prompt
+# flags: --years 5  --paths 2000  --days 64  --seed 2026  --quiet
+```
+
+Per ticker it prints a mini risk table (p5/median/p95 of the 64-day
+return, drawdown percentiles, P(touch a 10% drawdown), the observed
+worst-day ceiling) and writes `report/scenarios/<TICKER>_scenario_<date>.png`
+— 250 sample paths + the p5–p95 band + median + stats footer, one chart
+per ticker, reproducible by seed.
+
+Measured flavor from the first ten-tech run (5y, seed 2026, 2,000 paths
+each): MSFT/AAPL are the boring tails (P(DD>10%) 61–65%), NVDA pairs a
+−31% bad-quarter tail with +52% upside, and TSLA touches a double-digit
+drawdown in **99.5%** of its 2,000 resampled quarters.
+
+**Honesty note (on every chart):** resampling's tail IS its sample —
+no generated day can exceed the observed worst day. This is the v2/v3
+verdict's complement: calibrated accuracy comes from resampling; the
+(crash-tail / beyond-extreme) capability lives in the trained models.
+
+### 2. Market-pulse daily log (PLANNED — next natural use)
+
+`price_cli` already fetches spot + realized vol; a daily cron appending
+BS-vs-engine spreads + realized vol to a CSV turns it into a growing
+personal record of regime shifts (a Oct-2025-style vol spike shows up
+loudly in the spread).
+
+### 3. Rough-vol Monte Carlo for arbitrary instruments (PLANNED)
+
+The validated engine answers "odds of a X% drawdown over N days under
+rough vol, not GBM" for any horizon the 64-step grid covers — seconds
+on the GPU, one parameter change.
+
+### 4. Portfolio stress-table runner (PLANNED)
+
+Feed scenario_cli a personal ticker list (e.g. a real portfolio), get a
+combined table: per-name bad-quarter tails + portfolio-level DD
+distribution under joint resampling.
+
 ## Reproduce
 
 ```bash
